@@ -17,25 +17,26 @@ jobs:
       - name: Compilar y Empaquetar
         shell: powershell
         run: |
-          # 1. Identificar la librería y versión
+          # 1. Definir rutas
           $libPath = "C:\tools\opencv\build\x64\vc16\lib"
           $binPath = "C:\tools\opencv\build\x64\vc16\bin"
           $includePath = "C:\tools\opencv\build\include"
           
+          # 2. Encontrar la librería (opencv_world4130)
           $libFile = Get-ChildItem -Path $libPath -Filter "opencv_world*.lib" | Select-Object -First 1
-          $libName = $libFile.Name.Replace(".lib", "")
+          $libNameOnly = $libFile.BaseName # Esto quita el .lib
           $dllName = $libFile.Name.Replace(".lib", ".dll")
 
-          echo "Usando: $libName"
+          Write-Host "Compilando con: $libNameOnly"
 
-          # 2. Compilar con rutas de inclusión dobles por seguridad
-          g++ main.cpp -o detector_bordes.exe `
+          # 3. COMPILAR (Usando el nombre real de la librería directamente)
+          # Usamos & para ejecutar y pasamos las variables de PowerShell de forma segura
+          & g++ main.cpp -o detector_bordes.exe `
           -I"$includePath" `
-          -I"$includePath\opencv2" `
           -L"$libPath" `
-          -l$libName
+          -l$libNameOnly
 
-          # 3. Copiar la DLL al lado del EXE para que pueda ejecutarse
+          # 4. Copiar la DLL para el artefacto
           copy "$binPath\$dllName" .
           
       - name: Subir Resultado (EXE + DLL)
