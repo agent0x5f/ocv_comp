@@ -1,0 +1,30 @@
+name: Generar EXE para Windows
+on: [push] # Se activa cada vez que subes cambios
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      - name: Configurar OpenCV en Windows
+        run: |
+          # Usamos Chocolatey para instalar OpenCV rápidamente
+          choco install opencv -y
+          echo "OPENCV_DIR=C:\tools\opencv\build" >> $GITHUB_ENV
+
+      - name: Compilar ejecutable
+        run: |
+          # Usamos el compilador de Visual Studio (cl.exe) que ya viene en la máquina virtual
+          # O puedes usar g++ si prefieres MinGW
+          g++ main.cpp -o detector_bordes.exe `
+          -I"C:\tools\opencv\build\include" `
+          -L"C:\tools\opencv\build\x64\vc16\lib" `
+          -lopencv_world4100 # Nota: ajusta el número según la versión que instale choco
+
+      - name: Subir el ejecutable terminado
+        uses: actions/upload-artifact@v4
+        with:
+          name: programa-windows-m4
+          path: detector_bordes.exe
