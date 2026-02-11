@@ -1,65 +1,51 @@
-name: Generar EXE para Windows
-on: [push] # Se activa cada vez que subes cambios
+name: Generar Standalone EXE (OpenCV Estático)
+on: [push]
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Descargar código
+      - name: Descargar codigo fuente
         uses: actions/checkout@v4
 
-      - name: Configurar OpenCV en Windows
+      - name: Instalar OpenCV via Chocolatey
         run: |
-          # Usamos Chocolatey para instalar OpenCV rápidamente
           choco install opencv -y
-          echo "OPENCV_DIR=C:\tools\opencv\build" >> $GITHUB_ENV
+          # Nota: Chocolatey instala en C:\tools\opencv por defecto
 
-      - name: Compilar Todo-en-Uno (Standalone EXE)
-        shell: cmd
+      - name: Compilar Ejecutable Unico (Standalone)
+        shell: powershell
         run: |
-          :: 1. Entorno de Visual Studio
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-
-          :: 2. Rutas a las librerías ESTÁTICAS
-          set "OPENCV_INC=C:\tools\opencv\build\include"
-          set "OPENCV_STATIC_LIB=C:\tools\opencv\build\x64\vc16\staticlib"
-
-          :: 3. Compilar
-          :: /MT: Runtime de C++ estático
-          :: Enlazamos todas las dependencias necesarias de Windows para OpenCV estático
-          cl.exe main.cpp /I"%OPENCV_INC%" /EHsc /MT ^
-          /link /LIBPATH:"%OPENCV_STATIC_LIB%" ^
-          opencv_world4130s.lib ^
-          ade.lib Irpp.lib quirc.lib zlib.lib libjpeg-turbo.lib libpng.lib libtiff.lib libjasper.lib libwebp.lib ^
-          user32.lib gdi32.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib kernel32.lib ^
-          /OUT:detector_bordes_total.exe
-
-          :: 4. Verificación
-          if exist detector_bordes_total.exe (
-              echo "¡Éxito! Ejecutable único generado."
-          ) else (
-              echo "Error en la compilación estática."
-              exit /b 1
-          )
-
-      - name: Subir un solo archivo
-        uses: actions/upload-artifact@v4
-        with:
-          name: detector-bordes-standalone
-          path: detector_bordes_total.exe
-
-      - name: Subir Artefacto Final
-        uses: actions/upload-artifact@v4
-        with:
-          name: detector-bordes-portable
-          path: |
-            detector_bordes.exe
-            opencv_world4130.dll 
+          # 1. Definir rutas de la instalacion
+          $staticLibPath = "C:\tools\opencv\build\x64\vc16\staticlib"
+          $incPath = "C:\tools\opencv\build\include"
           
-      - name: Subir Resultado (EXE + DLL)
+          # 2. Autodetectar todas las librerias .lib en la carpeta estatica
+          # Esto evita fallos si el archivo no se llama 'opencv_world'
+          $libs = Get-ChildItem -Path $staticLibPath -Filter "*.lib" | ForEach-Object { $_.Name }
+          $allLibs = $libs -join " "
+          
+          Write-Host "Librerias encontradas para enlazar: $allLibs"
+
+          # 3. Comando de compilacion para MSVC (cl.exe)
+          # /MT: Enlace estatico del runtime de C++
+          # /EHsc: Habilitar excepciones de C++
+          # Se agregan librerias de sistema de Windows necesarias para video y ventanas
+          $msvcCmd = "cl.exe main.cpp /I`"$incPath`" /EHsc /MT /link /LIBPATH:`"$staticLibPath`" $allLibs user32.lib gdi32.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib kernel32.lib vfw32.lib cap-msmf.lib msimg32.lib /OUT:detector_bordes_final.exe"
+          
+          # 4. Ejecutar dentro del entorno de Visual Studio 2022
+          cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
+
+          # 5. Validacion de salida
+          if (Test-Path "detector_bordes_final.exe") {
+              Write-Host "¡Exito! El archivo standalone ha sido creado."
+          } else {
+              Write-Error "Error: No se encontro el archivo generado."
+              exit 1
+          }
+
+      - name: Subir Artefacto (Solo el EXE)
         uses: actions/upload-artifact@v4
         with:
-          name: programa-opencv-windows
-          path: |
-            detector_bordes.exe
-            *.dll
+          name: programa-opencv-estatico
+          path: detector_bordes_final.exe
