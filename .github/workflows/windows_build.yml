@@ -17,27 +17,32 @@ jobs:
       - name: Compilar y Empaquetar
         shell: powershell
         run: |
-          # 1. Definir rutas
+          # 1. Rutas
           $libPath = "C:\tools\opencv\build\x64\vc16\lib"
           $binPath = "C:\tools\opencv\build\x64\vc16\bin"
           $includePath = "C:\tools\opencv\build\include"
           
-          # 2. Encontrar la librería (opencv_world4130)
+          # 2. Identificar la librería real
           $libFile = Get-ChildItem -Path $libPath -Filter "opencv_world*.lib" | Select-Object -First 1
-          $libNameOnly = $libFile.BaseName # Esto quita el .lib
+          $name = $libFile.BaseName
           $dllName = $libFile.Name.Replace(".lib", ".dll")
+          
+          Write-Host "Libreria detectada: $name"
 
-          Write-Host "Compilando con: $libNameOnly"
+          # 3. COMPILAR (Usando interpolación de strings de PowerShell corregida)
+          # Al encerrar el comando en una variable y usar Invoke-Expression, 
+          # obligamos a PS a reemplazar $name por opencv_world4130 antes de llamar a g++
+          $compileCmd = "g++ main.cpp -o detector_bordes.exe -I`"$includePath`" -L`"$libPath`" -l$name"
+          Invoke-Expression $compileCmd
 
-          # 3. COMPILAR (Usando el nombre real de la librería directamente)
-          # Usamos & para ejecutar y pasamos las variables de PowerShell de forma segura
-          & g++ main.cpp -o detector_bordes.exe `
-          -I"$includePath" `
-          -L"$libPath" `
-          -l$libNameOnly
-
-          # 4. Copiar la DLL para el artefacto
-          copy "$binPath\$dllName" .
+          # 4. Copiar archivos necesarios
+          if (Test-Path "detector_bordes.exe") {
+              copy "$binPath\$dllName" .
+              Write-Host "Compilacion exitosa."
+          } else {
+              Write-Error "No se genero el ejecutable."
+              exit 1
+          }
           
       - name: Subir Resultado (EXE + DLL)
         uses: actions/upload-artifact@v4
