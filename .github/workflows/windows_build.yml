@@ -14,26 +14,23 @@ jobs:
           choco install opencv -y
           echo "OPENCV_DIR=C:\tools\opencv\build" >> $GITHUB_ENV
 
-      - name: Compilar y Empaquetar
-        shell: powershell
+      - name: Compilar con MSVC
+        shell: cmd # Usamos CMD para configurar el entorno de Visual Studio más fácilmente
         run: |
-          # 1. Rutas
-          $libPath = "C:\tools\opencv\build\x64\vc16\lib"
-          $binPath = "C:\tools\opencv\build\x64\vc16\bin"
-          $includePath = "C:\tools\opencv\build\include"
-          
-          # 2. Identificar la librería real
-          $libFile = Get-ChildItem -Path $libPath -Filter "opencv_world*.lib" | Select-Object -First 1
-          $name = $libFile.BaseName
-          $dllName = $libFile.Name.Replace(".lib", ".dll")
-          
-          Write-Host "Libreria detectada: $name"
+          :: 1. Configurar el entorno de compilación de 64 bits de Visual Studio
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
 
-          # 3. COMPILAR (Usando interpolación de strings de PowerShell corregida)
-          # Al encerrar el comando en una variable y usar Invoke-Expression, 
-          # obligamos a PS a reemplazar $name por opencv_world4130 antes de llamar a g++
-          $compileCmd = "g++ main.cpp -o detector_bordes.exe -I`"$includePath`" -L`"$libPath`" -l$name"
-          Invoke-Expression $compileCmd
+          :: 2. Definir rutas (basadas en la instalación de Chocolatey)
+          set OPENCV_INC=C:\tools\opencv\build\include
+          set OPENCV_LIB=C:\tools\opencv\build\x64\vc16\lib
+          set OPENCV_BIN=C:\tools\opencv\build\x64\vc16\bin
+
+          :: 3. Compilar usando cl.exe
+          :: /EHsc (manejo de excepciones), /I (include), /link (enlazar)
+          cl.exe main.cpp /I"%OPENCV_INC%" /EHsc /link /LIBPATH:快速"%OPENCV_LIB%" opencv_world4130.lib /OUT:detector_bordes.exe
+
+          :: 4. Copiar la DLL necesaria para que el EXE funcione
+          copy "%OPENCV_BIN%\opencv_world4130.dll" .
 
           # 4. Copiar archivos necesarios
           if (Test-Path "detector_bordes.exe") {
