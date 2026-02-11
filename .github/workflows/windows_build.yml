@@ -14,31 +14,37 @@ jobs:
           choco install opencv -y
           echo "OPENCV_DIR=C:\tools\opencv\build" >> $GITHUB_ENV
 
-      - name: Compilar con MSVC
+      - name: Compilar con MSVC (Modo Estático)
         shell: cmd
         run: |
-          :: 1. Configurar entorno de Visual Studio
+          :: 1. Configurar entorno de 64 bits
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
 
-          :: 2. Definir variables de ruta
+          :: 2. Rutas de OpenCV
           set "OPENCV_INC=C:\tools\opencv\build\include"
           set "OPENCV_LIB=C:\tools\opencv\build\x64\vc16\lib"
           set "OPENCV_BIN=C:\tools\opencv\build\x64\vc16\bin"
 
-          :: 3. Compilar
-          :: /EHsc: Manejo de excepciones de C++
-          :: /I: Ruta de headers
-          :: /link: Pasar opciones al enlazador
-          cl.exe main.cpp /I"%OPENCV_INC%" /EHsc /link /LIBPATH:"%OPENCV_LIB%" opencv_world4130.lib /OUT:detector_bordes.exe
+          :: 3. Compilar con /MT (Multi-threaded Static Runtime)
+          :: Esto elimina la dependencia de msvcp140.dll y vcruntime140.dll
+          cl.exe main.cpp /I"%OPENCV_INC%" /EHsc /MT /link /LIBPATH:"%OPENCV_LIB%" opencv_world4130.lib /OUT:detector_bordes.exe
 
-          :: 4. Verificar y copiar DLL
+          :: 4. Copiar la DLL de OpenCV (esta siempre debe ir al lado del exe)
           if exist detector_bordes.exe (
               copy "%OPENCV_BIN%\opencv_world4130.dll" .
-              echo Compilacion exitosa.
+              echo Compilacion exitosa con Runtime Estatico.
           ) else (
-              echo Error: No se pudo crear el ejecutable.
+              echo Error en la compilacion.
               exit /b 1
-          )    
+          )
+
+      - name: Subir Artefacto Final
+        uses: actions/upload-artifact@v4
+        with:
+          name: detector-bordes-portable
+          path: |
+            detector_bordes.exe
+            opencv_world4130.dll 
           
       - name: Subir Resultado (EXE + DLL)
         uses: actions/upload-artifact@v4
