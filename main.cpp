@@ -4,7 +4,7 @@
 using namespace cv;
 using namespace std;
 int main()
-{
+{//test
 Mat img ;
 img = imread("lenna.png", IMREAD_COLOR);
 namedWindow("2025S2-P1", WINDOW_AUTOSIZE);
