@@ -15,45 +15,36 @@ jobs:
       - name: Localizar OpenCV y Compilar
         shell: powershell
         run: |
-          # 1. Buscar la ruta real de OpenCV (Chocolatey suele usar C:\tools\opencv)
+          # 1. Localizar rutas
           $basePath = "C:\tools\opencv\build"
-          if (-not (Test-Path $basePath)) {
-              $basePath = (Get-ChildItem -Path "C:\" -Filter "opencv" -Recurse -Directory -ErrorAction SilentlyContinue | Select-Object -First 1).FullName + "\build"
-          }
-          
-          Write-Host "Base de OpenCV encontrada en: $basePath"
-
-          # 2. Buscar la carpeta de librerias (probando staticlib o lib)
           $staticLibPath = Get-ChildItem -Path $basePath -Filter "staticlib" -Recurse | Select-Object -First 1
           
           if ($null -eq $staticLibPath) {
-              Write-Host "No se encontro staticlib, intentando con carpetas de librerias dinamicas..."
-              $staticLibPath = Get-ChildItem -Path $basePath -Filter "lib" -Recurse | Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1
+              Write-Host "Usando modo DINAMICO (DLLs)..."
+              $libDir = "C:\tools\opencv\build\x64\vc16\lib"
+              $runtimeFlag = "/MD"
+              # Enlazamos solo la libreria principal (evitamos el error de cap-msmf.lib)
+              $libsToLink = "opencv_world4130.lib"
+          } else {
+              Write-Host "Usando modo ESTATICO..."
+              $libDir = $staticLibPath.FullName
+              $runtimeFlag = "/MT"
+              $libsToLink = (Get-ChildItem -Path $libDir -Filter "*.lib" | ForEach-Object { $_.Name }) -join " "
           }
 
-          $libDir = $staticLibPath.FullName
-          $incDir = Join-Path $basePath "include"
+          $incDir = "C:\tools\opencv\build\include"
           
-          Write-Host "Ruta de Librerias: $libDir"
-          Write-Host "Ruta de Includes: $incDir"
-
-          # 3. Recolectar TODAS las librerias .lib encontradas
-          $libs = Get-ChildItem -Path $libDir -Filter "*.lib" -Recurse | ForEach-Object { $_.Name }
-          $allLibs = $libs -join " "
-
-          # 4. Comando de compilacion (cl.exe)
-          # Si no hay staticlib, usaremos /MD (dinamico) para evitar errores de mismatch
-          $runtimeFlag = if ($libDir -like "*staticlib*") { "/MT" } else { "/MD" }
+          # 2. Comando de compilacion limpio
+          # Eliminamos cap-msmf.lib y otros que causan conflictos en modo dinamico
+          $msvcCmd = "cl.exe main.cpp /I`"$incDir`" /EHsc $runtimeFlag /link /LIBPATH:`"$libDir`" $libsToLink user32.lib gdi32.lib advapi32.lib shell32.lib /OUT:detector_final.exe"
           
-          $msvcCmd = "cl.exe main.cpp /I`"$incDir`" /EHsc $runtimeFlag /link /LIBPATH:`"$libDir`" $allLibs user32.lib gdi32.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib kernel32.lib vfw32.lib cap-msmf.lib msimg32.lib /OUT:detector_final.exe"
-          
-          # 5. Ejecutar con el entorno de Visual Studio
+          # 3. Ejecutar compilacion
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # 6. Mover DLLs si el enlace fue dinamico (para que el artifact sea funcional)
+          # 4. Copiar DLLs necesarias si estamos en modo dinamico
           if ($runtimeFlag -eq "/MD") {
-              $binDir = Join-Path ($staticLibPath.Parent.FullName) "bin"
-              if (Test-Path $binDir) { copy "$binDir\*.dll" . }
+              $binDir = "C:\tools\opencv\build\x64\vc16\bin"
+              copy "$binDir\opencv_world4130.dll" .
           }
 
       - name: Subir Resultado
