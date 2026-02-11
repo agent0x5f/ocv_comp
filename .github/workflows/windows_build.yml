@@ -15,31 +15,30 @@ jobs:
           echo "OPENCV_DIR=C:\tools\opencv\build" >> $GITHUB_ENV
 
       - name: Compilar con MSVC
-        shell: cmd # Usamos CMD para configurar el entorno de Visual Studio más fácilmente
+        shell: cmd
         run: |
-          :: 1. Configurar el entorno de compilación de 64 bits de Visual Studio
+          :: 1. Configurar entorno de Visual Studio
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
 
-          :: 2. Definir rutas (basadas en la instalación de Chocolatey)
-          set OPENCV_INC=C:\tools\opencv\build\include
-          set OPENCV_LIB=C:\tools\opencv\build\x64\vc16\lib
-          set OPENCV_BIN=C:\tools\opencv\build\x64\vc16\bin
+          :: 2. Definir variables de ruta
+          set "OPENCV_INC=C:\tools\opencv\build\include"
+          set "OPENCV_LIB=C:\tools\opencv\build\x64\vc16\lib"
+          set "OPENCV_BIN=C:\tools\opencv\build\x64\vc16\bin"
 
-          :: 3. Compilar usando cl.exe
-          :: /EHsc (manejo de excepciones), /I (include), /link (enlazar)
-          cl.exe main.cpp /I"%OPENCV_INC%" /EHsc /link /LIBPATH:快速"%OPENCV_LIB%" opencv_world4130.lib /OUT:detector_bordes.exe
+          :: 3. Compilar
+          :: /EHsc: Manejo de excepciones de C++
+          :: /I: Ruta de headers
+          :: /link: Pasar opciones al enlazador
+          cl.exe main.cpp /I"%OPENCV_INC%" /EHsc /link /LIBPATH:"%OPENCV_LIB%" opencv_world4130.lib /OUT:detector_bordes.exe
 
-          :: 4. Copiar la DLL necesaria para que el EXE funcione
-          copy "%OPENCV_BIN%\opencv_world4130.dll" .
-
-          # 4. Copiar archivos necesarios
-          if (Test-Path "detector_bordes.exe") {
-              copy "$binPath\$dllName" .
-              Write-Host "Compilacion exitosa."
-          } else {
-              Write-Error "No se genero el ejecutable."
-              exit 1
-          }
+          :: 4. Verificar y copiar DLL
+          if exist detector_bordes.exe (
+              copy "%OPENCV_BIN%\opencv_world4130.dll" .
+              echo Compilacion exitosa.
+          ) else (
+              echo Error: No se pudo crear el ejecutable.
+              exit /b 1
+          )    
           
       - name: Subir Resultado (EXE + DLL)
         uses: actions/upload-artifact@v4
