@@ -1,4 +1,4 @@
-name: Generar Standalone EXE (Auto-Rutas)
+name: Generar EXE con Fecha y Hora (Sin Año)
 on: [push]
 
 jobs:
@@ -8,49 +8,52 @@ jobs:
       - name: Descargar codigo fuente
         uses: actions/checkout@v4
 
-      - name: Instalar OpenCV
-        run: |
-          choco install opencv -y
+      # 1. Configurar Cache de OpenCV
+      - name: Cache OpenCV
+        id: cache-opencv
+        uses: actions/cache@v4
+        with:
+          path: C:\tools\opencv
+          key: ${{ runner.os }}-opencv-4.13.0
 
-      - name: Localizar OpenCV y Compilar
+      - name: Instalar OpenCV (Solo si no hay cache)
+        if: steps.cache-opencv.outputs.cache-hit != 'true'
+        run: choco install opencv -y
+
+      # 2. Generar Timestamp (MesDia_HoraMinuto)
+      - name: Generar Timestamp
+        id: times
         shell: powershell
         run: |
-          # 1. Localizar rutas
-          $basePath = "C:\tools\opencv\build"
-          $staticLibPath = Get-ChildItem -Path $basePath -Filter "staticlib" -Recurse | Select-Object -First 1
-          
-          if ($null -eq $staticLibPath) {
-              Write-Host "Usando modo DINAMICO (DLLs)..."
-              $libDir = "C:\tools\opencv\build\x64\vc16\lib"
-              $runtimeFlag = "/MD"
-              # Enlazamos solo la libreria principal (evitamos el error de cap-msmf.lib)
-              $libsToLink = "opencv_world4130.lib"
-          } else {
-              Write-Host "Usando modo ESTATICO..."
-              $libDir = $staticLibPath.FullName
-              $runtimeFlag = "/MT"
-              $libsToLink = (Get-ChildItem -Path $libDir -Filter "*.lib" | ForEach-Object { $_.Name }) -join " "
-          }
+          # Formato: MesDia_HoraMinuto (Ej: 0211_1830)
+          $timestamp = Get-Date -Format "MMdd_HHmm"
+          echo "timestamp=$timestamp" >> $env:GITHUB_OUTPUT
 
+      # 3. Compilar con el nuevo nombre
+      - name: Compilar con Timestamp
+        shell: powershell
+        env:
+          TS: ${{ steps.times.outputs.timestamp }}
+        run: |
+          $libDir = "C:\tools\opencv\build\x64\vc16\lib"
           $incDir = "C:\tools\opencv\build\include"
+          $binDir = "C:\tools\opencv\build\x64\vc16\bin"
           
-          # 2. Comando de compilacion limpio
-          # Eliminamos cap-msmf.lib y otros que causan conflictos en modo dinamico
-          $msvcCmd = "cl.exe main.cpp /I`"$incDir`" /EHsc $runtimeFlag /link /LIBPATH:`"$libDir`" $libsToLink user32.lib gdi32.lib advapi32.lib shell32.lib /OUT:detector_final.exe"
+          # Nombre del archivo sin el año
+          $exeName = "detector_$env:TS.exe"
+          Write-Host "Generando archivo: $exeName"
+
+          $msvcCmd = "cl.exe main.cpp /I`"$incDir`" /EHsc /MD /link /LIBPATH:`"$libDir`" opencv_world4130.lib user32.lib gdi32.lib advapi32.lib shell32.lib /OUT:$exeName"
           
-          # 3. Ejecutar compilacion
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # 4. Copiar DLLs necesarias si estamos en modo dinamico
-          if ($runtimeFlag -eq "/MD") {
-              $binDir = "C:\tools\opencv\build\x64\vc16\bin"
-              copy "$binDir\opencv_world4130.dll" .
-          }
+          # Copiar la DLL necesaria
+          copy "$binDir\opencv_world4130.dll" .
 
-      - name: Subir Resultado
+      - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: programa-opencv-final
+          name: detector-build-${{ steps.times.outputs.timestamp }}
           path: |
-            detector_final.exe
+            *.exe
             *.dll
