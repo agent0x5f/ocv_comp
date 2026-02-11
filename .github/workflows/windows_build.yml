@@ -14,29 +14,39 @@ jobs:
           choco install opencv -y
           echo "OPENCV_DIR=C:\tools\opencv\build" >> $GITHUB_ENV
 
-      - name: Compilar con MSVC (Modo Estático)
+      - name: Compilar Todo-en-Uno (Standalone EXE)
         shell: cmd
         run: |
-          :: 1. Configurar entorno de 64 bits
+          :: 1. Entorno de Visual Studio
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
 
-          :: 2. Rutas de OpenCV
+          :: 2. Rutas a las librerías ESTÁTICAS
           set "OPENCV_INC=C:\tools\opencv\build\include"
-          set "OPENCV_LIB=C:\tools\opencv\build\x64\vc16\lib"
-          set "OPENCV_BIN=C:\tools\opencv\build\x64\vc16\bin"
+          set "OPENCV_STATIC_LIB=C:\tools\opencv\build\x64\vc16\staticlib"
 
-          :: 3. Compilar con /MT (Multi-threaded Static Runtime)
-          :: Esto elimina la dependencia de msvcp140.dll y vcruntime140.dll
-          cl.exe main.cpp /I"%OPENCV_INC%" /EHsc /MT /link /LIBPATH:"%OPENCV_LIB%" opencv_world4130.lib /OUT:detector_bordes.exe
+          :: 3. Compilar
+          :: /MT: Runtime de C++ estático
+          :: Enlazamos todas las dependencias necesarias de Windows para OpenCV estático
+          cl.exe main.cpp /I"%OPENCV_INC%" /EHsc /MT ^
+          /link /LIBPATH:"%OPENCV_STATIC_LIB%" ^
+          opencv_world4130s.lib ^
+          ade.lib Irpp.lib quirc.lib zlib.lib libjpeg-turbo.lib libpng.lib libtiff.lib libjasper.lib libwebp.lib ^
+          user32.lib gdi32.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib kernel32.lib ^
+          /OUT:detector_bordes_total.exe
 
-          :: 4. Copiar la DLL de OpenCV (esta siempre debe ir al lado del exe)
-          if exist detector_bordes.exe (
-              copy "%OPENCV_BIN%\opencv_world4130.dll" .
-              echo Compilacion exitosa con Runtime Estatico.
+          :: 4. Verificación
+          if exist detector_bordes_total.exe (
+              echo "¡Éxito! Ejecutable único generado."
           ) else (
-              echo Error en la compilacion.
+              echo "Error en la compilación estática."
               exit /b 1
           )
+
+      - name: Subir un solo archivo
+        uses: actions/upload-artifact@v4
+        with:
+          name: detector-bordes-standalone
+          path: detector_bordes_total.exe
 
       - name: Subir Artefacto Final
         uses: actions/upload-artifact@v4
