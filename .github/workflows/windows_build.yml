@@ -1,4 +1,4 @@
-name: Generar EXE con Fecha y Hora (Sin Año)
+name: compila
 on: [push]
 
 jobs:
@@ -8,29 +8,25 @@ jobs:
       - name: Descargar codigo fuente
         uses: actions/checkout@v4
 
-      # 1. Configurar Cache de OpenCV
       - name: Cache OpenCV
         id: cache-opencv
         uses: actions/cache@v4
         with:
           path: C:\tools\opencv
-          key: ${{ runner.os }}-opencv-4.13.0
+          key: ${{ runner.os }}-opencv-4.13.0-v2 # Cambié la key para forzar un cache limpio
 
-      - name: Instalar OpenCV (Solo si no hay cache)
+      - name: Instalar OpenCV
         if: steps.cache-opencv.outputs.cache-hit != 'true'
         run: choco install opencv -y
 
-      # 2. Generar Timestamp (MesDia_HoraMinuto)
       - name: Generar Timestamp
         id: times
         shell: powershell
         run: |
-          # Formato: MesDia_HoraMinuto (Ej: 0211_1830)
           $timestamp = Get-Date -Format "MMdd_HHmm"
           echo "timestamp=$timestamp" >> $env:GITHUB_OUTPUT
 
-      # 3. Compilar con el nuevo nombre
-      - name: Compilar con Timestamp
+      - name: Compilar con Flags de Compatibilidad
         shell: powershell
         env:
           TS: ${{ steps.times.outputs.timestamp }}
@@ -39,21 +35,30 @@ jobs:
           $incDir = "C:\tools\opencv\build\include"
           $binDir = "C:\tools\opencv\build\x64\vc16\bin"
           
-          # Nombre del archivo sin el año
           $exeName = "detector_$env:TS.exe"
-          Write-Host "Generando archivo: $exeName"
 
-          $msvcCmd = "cl.exe main.cpp /I`"$incDir`" /EHsc /MD /link /LIBPATH:`"$libDir`" opencv_world4130.lib user32.lib gdi32.lib advapi32.lib shell32.lib /OUT:$exeName"
+          # 1. Compilar asegurando compatibilidad binaria absoluta (/MD)
+          # Añadimos /D "NDEBUG" para evitar que busque versiones de depuración de las DLLs
+          $msvcCmd = "cl.exe main.cpp /I`"$incDir`" /EHsc /MD /D `"NDEBUG`" /link /LIBPATH:`"$libDir`" opencv_world4130.lib user32.lib gdi32.lib advapi32.lib shell32.lib /OUT:$exeName"
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # Copiar la DLL necesaria
+          # 2. Copiar la DLL de OpenCV
           copy "$binDir\opencv_world4130.dll" .
+          
+          # 3. TRUCO EXTRA: Copiar las DLLs de Visual C++ por si la PC destino no las tiene
+          # Esto suele evitar el error 0xc0000904 si el sistema no está actualizado
+          $vcRedistDir = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC\v143\x64\Microsoft.VC143.CRT"
+          if (Test-Path $vcRedistDir) {
+              copy "$vcRedistDir\msvcp140.dll" .
+              copy "$vcRedistDir\vcruntime140.dll" .
+              copy "$vcRedistDir\vcruntime140_1.dll" .
+          }
 
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: detector-build-${{ steps.times.outputs.timestamp }}
+          name: detector-fix-${{ steps.times.outputs.timestamp }}
           path: |
             *.exe
             *.dll
