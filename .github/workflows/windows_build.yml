@@ -14,17 +14,34 @@ jobs:
           choco install opencv -y
           echo "OPENCV_DIR=C:\tools\opencv\build" >> $GITHUB_ENV
 
-      - name: Compilar ejecutable
+      - name: Compilar y Empaquetar
+        shell: powershell
         run: |
-          # Usamos el compilador de Visual Studio (cl.exe) que ya viene en la máquina virtual
-          # O puedes usar g++ si prefieres MinGW
-          g++ main.cpp -o detector_bordes.exe `
-          -I"C:\tools\opencv\build\include" `
-          -L"C:\tools\opencv\build\x64\vc16\lib" `
-          -lopencv_world4100 # Nota: ajusta el número según la versión que instale choco
+          # 1. Identificar la librería y versión
+          $libPath = "C:\tools\opencv\build\x64\vc16\lib"
+          $binPath = "C:\tools\opencv\build\x64\vc16\bin"
+          $includePath = "C:\tools\opencv\build\include"
+          
+          $libFile = Get-ChildItem -Path $libPath -Filter "opencv_world*.lib" | Select-Object -First 1
+          $libName = $libFile.Name.Replace(".lib", "")
+          $dllName = $libFile.Name.Replace(".lib", ".dll")
 
-      - name: Subir el ejecutable terminado
+          echo "Usando: $libName"
+
+          # 2. Compilar con rutas de inclusión dobles por seguridad
+          g++ main.cpp -o detector_bordes.exe `
+          -I"$includePath" `
+          -I"$includePath\opencv2" `
+          -L"$libPath" `
+          -l$libName
+
+          # 3. Copiar la DLL al lado del EXE para que pueda ejecutarse
+          copy "$binPath\$dllName" .
+          
+      - name: Subir Resultado (EXE + DLL)
         uses: actions/upload-artifact@v4
         with:
-          name: programa-windows-m4
-          path: detector_bordes.exe
+          name: programa-opencv-windows
+          path: |
+            detector_bordes.exe
+            *.dll
