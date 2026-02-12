@@ -25,18 +25,24 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: powershell
         run: |
-          # URLS VERIFICADAS para 3.2.4
+          # URLS CORREGIDAS PARA 3.2.4
           $url_headers = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4-headers.7z"
-          $url_static_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Lib.7z"
+          # El archivo 'Dev' es el que contiene las librerías estáticas para MSVC
+          $url_static_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Dev.7z"
           
           New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets
           
           echo "Descargando headers..."
           curl.exe -fL $url_headers -o wx_headers.7z --retry 3
           
-          echo "Descargando librerias estaticas..."
+          echo "Descargando librerias (Dev/Static)..."
           curl.exe -fL $url_static_libs -o wx_static.7z --retry 3
           
+          if (!(Test-Path wx_static.7z)) {
+            echo "ERROR: No se pudo descargar el archivo de librerias."
+            exit 1
+          }
+
           echo "Extrayendo archivos..."
           7z x wx_headers.7z -oC:\tools\wxwidgets -y
           7z x wx_static.7z -oC:\tools\wxwidgets -y
