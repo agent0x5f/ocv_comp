@@ -1,4 +1,4 @@
-name: compila_static_source_fix
+name: compila_final_con_fuentes
 on: [push]
 
 jobs:
@@ -8,6 +8,7 @@ jobs:
       - name: Descargar codigo fuente
         uses: actions/checkout@v4
 
+      # 1. CACHE (Para wxWidgets compilado)
       - name: Cache wxWidgets Compilado
         id: cache-wx
         uses: actions/cache@v4
@@ -18,16 +19,17 @@ jobs:
       - name: Instalar OpenCV
         run: choco install opencv -y
 
+      # 2. COMPILAR WXWIDGETS (Solo si no está en cache)
       - name: Descargar y Compilar wxWidgets (Static)
         if: steps.cache-wx.outputs.cache-hit != 'true'
         shell: powershell
         run: |
           $url = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4.7z"
-          New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets
+          if (!(Test-Path C:\tools\wxwidgets)) { New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets }
+          
           curl.exe -fL $url -o wx_source.7z --retry 3
           7z x wx_source.7z -oC:\tools\wxwidgets -y
           
-          echo "Compilando wxWidgets..."
           cd C:\tools\wxwidgets\build\msw
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && nmake /f makefile.vc BUILD=release SHARED=0 TARGET_CPU=AMD64"
 
@@ -38,11 +40,12 @@ jobs:
           $timestamp = Get-Date -Format "MMdd_HHmm"
           echo "timestamp=$timestamp" >> $env:GITHUB_OUTPUT
 
-      - name: Compilar Tu Proyecto
+      - name: Compilar y Organizar
         shell: powershell
         env:
           TS: ${{ steps.times.outputs.timestamp }}
         run: |
+          # --- RUTAS ---
           $cvBase = "C:\tools\opencv\build"
           $cvInc = "$cvBase\include"
           $cvLib = "$cvBase\x64\vc16\lib"
@@ -53,32 +56,45 @@ jobs:
           $wxSetupInc = "$wxLibPath\mswu"
 
           $exeName = "detector_$env:TS.exe"
+          
+          # Cremaos la carpeta de salida 'dist'
+          New-Item -ItemType Directory -Force -Path dist
+          # Creamos la subcarpeta para el código fuente
+          New-Item -ItemType Directory -Force -Path dist\codigo_fuente
 
           # --- LIBRERIAS ---
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib winmm.lib shlwapi.lib version.lib"
           $cvLibs = "opencv_world4130.lib"
-          
-          # SOLUCIÓN: Agregamos comdlg32.lib (Diálogos) y winspool.lib (Impresoras)
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib winspool.lib"
 
-          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxBase\include`" /I`"$wxSetupInc`" /D`"__WXMSW__`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
+          # --- COMPILACIÓN ---
+          # Compilamos y guardamos el EXE en la carpeta 'dist'
+          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxBase\include`" /I`"$wxSetupInc`" /D`"__WXMSW__`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:dist\$exeName"
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # Copiar DLL OpenCV y Runtimes
-          copy "$cvBin\opencv_world4130.dll" .
+          # --- EMPAQUETADO DE DEPENDENCIAS ---
+          echo "Copiando DLLs a carpeta dist..."
+          copy "$cvBin\opencv_world4130.dll" dist\
+          
           $sysDlls = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
           foreach ($dll in $sysDlls) {
               $found = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" -Recurse -Filter $dll | Select-Object -First 1
-              if ($found) { copy $found.FullName . }
+              if ($found) { copy $found.FullName dist\ }
           }
           
-          ls *.exe, *.dll
+          # --- RESPALDO DE CÓDIGO FUENTE ---
+          echo "Copiando archivos fuente a dist\codigo_fuente..."
+          # Copiamos todo lo que sea código, imágenes, video, datos, etc.
+          # Excluimos carpetas de sistema (.git, .github) y binarios generados
+          Get-ChildItem -Path . -Exclude ".git", ".github", "dist", "*.exe", "*.obj", "*.7z" | Copy-Item -Destination dist\codigo_fuente -Recurse -Force
+
+          echo "Contenido final:"
+          Get-ChildItem -Path dist -Recurse
 
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: detector-static-wx-${{ steps.times.outputs.timestamp }}
-          path: |
-            *.exe
-            *.dll
+          name: detector-completo-${{ steps.times.outputs.timestamp }}
+          # Subimos el contenido de la carpeta 'dist'
+          path: dist/*
