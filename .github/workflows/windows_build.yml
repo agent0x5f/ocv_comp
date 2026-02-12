@@ -30,15 +30,11 @@ jobs:
           
           New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets
           
-          # Configuración para evitar desconexiones
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          $UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-
-          echo "Descargando headers..."
-          Invoke-WebRequest -Uri $url_headers -OutFile wx_headers.7z -UserAgent $UserAgent -MaximumRetryCount 3
+          echo "Descargando headers con curl..."
+          curl.exe -L $url_headers -o wx_headers.7z --retry 3 --retry-delay 5
           
-          echo "Descargando librerias estaticas..."
-          Invoke-WebRequest -Uri $url_static_libs -OutFile wx_static.7z -UserAgent $UserAgent -MaximumRetryCount 3
+          echo "Descargando librerias estaticas con curl..."
+          curl.exe -L $url_static_libs -o wx_static.7z --retry 3 --retry-delay 5
           
           echo "Extrayendo archivos..."
           7z x wx_headers.7z -oC:\tools\wxwidgets -y
