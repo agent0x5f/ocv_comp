@@ -1,4 +1,4 @@
-name: compila_final_dll_fix
+name: compila_final_release_dll
 on: [push]
 
 jobs:
@@ -15,31 +15,36 @@ jobs:
           path: |
             C:\tools\opencv
             C:\tools\wxwidgets
-          key: ${{ runner.os }}-dll-fix-v1
+          key: ${{ runner.os }}-release-dll-v1
 
       - name: Instalar OpenCV
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: choco install opencv -y
 
-      - name: Descargar wxWidgets (Dev/DLL)
+      - name: Descargar wxWidgets (Headers + Libs + DLLs)
         if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: powershell
         run: |
-          # Usamos el paquete _Dev que contiene las DLLs precompiladas
-          $url_headers = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4-headers.7z"
-          $url_dev_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Dev.7z"
+          # 1. Headers (Necesario para compilar)
+          $url_h = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4-headers.7z"
+          # 2. Dev Libs (Necesario para el LINKER .lib)
+          $url_dev = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Dev.7z"
+          # 3. Release DLLs (Necesario para EJECUTAR .dll - ¡AQUI ESTA LA SOLUCION!)
+          $url_dll = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_ReleaseDLL.7z"
           
           New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets
+          New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets\dll_release
           
-          echo "Descargando headers..."
-          curl.exe -fL $url_headers -o wx_headers.7z --retry 3
-          
-          echo "Descargando binarios..."
-          curl.exe -fL $url_dev_libs -o wx_binaries.7z --retry 3
+          echo "Descargando paquetes..."
+          curl.exe -fL $url_h -o wx_headers.7z --retry 3
+          curl.exe -fL $url_dev -o wx_dev.7z --retry 3
+          curl.exe -fL $url_dll -o wx_dll.7z --retry 3
           
           echo "Extrayendo..."
           7z x wx_headers.7z -oC:\tools\wxwidgets -y
-          7z x wx_binaries.7z -oC:\tools\wxwidgets -y
+          7z x wx_dev.7z -oC:\tools\wxwidgets -y
+          # Extraemos las DLLs en una carpeta aparte para encontrarlas fácil
+          7z x wx_dll.7z -oC:\tools\wxwidgets\dll_release -y
 
       - name: Generar Timestamp
         id: times
@@ -53,28 +58,26 @@ jobs:
         env:
           TS: ${{ steps.times.outputs.timestamp }}
         run: |
-          # 1. Configurar Rutas
+          # --- RUTAS ---
           $cvBase = "C:\tools\opencv\build"
-          $cvLib = "$cvBase\x64\vc16\lib"
           $cvInc = "$cvBase\include"
+          $cvLib = "$cvBase\x64\vc16\lib"
           $cvBin = "$cvBase\x64\vc16\bin"
           
           $wxBase = "C:\tools\wxwidgets"
+          # Carpeta donde extrajimos las DLLs limpias
+          $wxDllPath = "$wxBase\dll_release"
           
-          # Detectar dónde está setup.h para saber la ruta base real
+          # Buscamos setup.h para compilar
           $setupFile = Get-ChildItem -Path $wxBase -Recurse -Filter "setup.h" | Where-Object { $_.FullName -like "*mswu\wx\setup.h" } | Select-Object -First 1
-          
-          if (!$setupFile) { echo "ERROR: No se encontró wx/setup.h"; exit 1 }
-          
+          if (!$setupFile) { echo "ERROR: setup.h no encontrado"; exit 1 }
           $wxSetupInc = $setupFile.Directory.Parent.FullName
-          # Esta es la carpeta que contiene tanto los .lib como las .dll
+          # Ruta de los .LIB (desde el paquete Dev)
           $wxLibPath = $setupFile.Directory.Parent.Parent.FullName
-          
-          echo "Ruta de librerias detectada: $wxLibPath"
 
           $exeName = "detector_$env:TS.exe"
 
-          # 2. Compilar
+          # --- COMPILACIÓN ---
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
@@ -83,34 +86,31 @@ jobs:
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # 3. COPIAR DLLS (Corrección Directa)
-          echo "Copiando dependencias..."
+          # --- COPIADO (SOLUCIÓN DEFINITIVA) ---
+          echo "Empaquetando..."
           
-          # Copiar OpenCV
+          # 1. OpenCV
           copy "$cvBin\opencv_world4130.dll" .
           
-          # Copiar wxWidgets DLLs - Usamos la ruta $wxLibPath directamente
-          # El comodín *32u*.dll atrapa wxbase32u_...dll y wxmsw32u_core_...dll
-          # pero ignora las *32ud* (debug)
-          echo "Buscando DLLs en: $wxLibPath"
-          copy "$wxLibPath\wxbase32u*.dll" .
-          copy "$wxLibPath\wxmsw32u_core*.dll" .
+          # 2. wxWidgets: Copiamos TODO lo que haya en la carpeta dll_release
+          # Al bajar el paquete 'ReleaseDLL', garantizamos que solo hay DLLs útiles (incluida la core)
+          echo "Copiando DLLs desde $wxDllPath..."
+          copy "$wxDllPath\*.dll" .
           
-          # Copiar Runtime VC++ (por si acaso)
+          # 3. Runtime VC++
           $sysDlls = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
           foreach ($dll in $sysDlls) {
               $found = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" -Recurse -Filter $dll | Select-Object -First 1
               if ($found) { copy $found.FullName . }
           }
           
-          # Verificación final en el log
-          echo "CONTENIDO DEL ARTEFACTO:"
+          echo "--- LISTA FINAL DE ARCHIVOS ---"
           ls *.exe, *.dll
 
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: detector-funcional-${{ steps.times.outputs.timestamp }}
+          name: detector-full-${{ steps.times.outputs.timestamp }}
           path: |
             *.exe
             *.dll
