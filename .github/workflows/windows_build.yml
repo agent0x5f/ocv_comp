@@ -29,11 +29,20 @@ jobs:
           $url_static_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Lib.7z"
           
           New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets
-          Invoke-WebRequest -Uri $url_headers -OutFile wx_headers.7z
-          Invoke-WebRequest -Uri $url_static_libs -OutFile wx_static.7z
           
-          7z x wx_headers.7z -oC:\tools\wxwidgets
-          7z x wx_static.7z -oC:\tools\wxwidgets
+          # Configuración para evitar desconexiones
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          $UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+
+          echo "Descargando headers..."
+          Invoke-WebRequest -Uri $url_headers -OutFile wx_headers.7z -UserAgent $UserAgent -MaximumRetryCount 3
+          
+          echo "Descargando librerias estaticas..."
+          Invoke-WebRequest -Uri $url_static_libs -OutFile wx_static.7z -UserAgent $UserAgent -MaximumRetryCount 3
+          
+          echo "Extrayendo archivos..."
+          7z x wx_headers.7z -oC:\tools\wxwidgets -y
+          7z x wx_static.7z -oC:\tools\wxwidgets -y
 
       - name: Generar Timestamp
         id: times
