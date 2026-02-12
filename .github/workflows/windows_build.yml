@@ -55,15 +55,21 @@ jobs:
           $cvInc = "C:\tools\opencv\build\include"
           $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
           
-          # Buscamos dinámicamente la carpeta que contiene mswu/wx/setup.h
           $wxBase = "C:\tools\wxwidgets"
-          $setupPath = (Get-ChildItem -Path $wxBase -Recurse -Filter "setup.h" | Where-Object { $_.FullName -like "*mswu*" }).Directory.Parent.FullName
           
-          echo "Carpeta de configuracion detectada: $setupPath"
+          # Buscamos la carpeta mswu (Release) específicamente
+          $setupDir = Get-ChildItem -Path $wxBase -Recurse -Filter "setup.h" | Where-Object { $_.FullName -like "*vc14x_x64_dll\mswu\wx\setup.h" } | Select-Object -First 1
+          $wxSetupInc = $setupDir.Directory.Parent.FullName # Esto nos da la ruta hasta \mswu
           
-          $wxInc = "$wxBase\include"
-          $wxSetupInc = $setupPath  # Esta carpeta contiene el 'wx/setup.h'
-          $wxLibPath = (Get-ChildItem -Path $wxBase -Recurse -Filter "wxmsw32u_core.lib").Directory.FullName
+          # Buscamos la carpeta de las librerías .lib
+          $libFile = Get-ChildItem -Path $wxBase -Recurse -Filter "wxmsw32u_core.lib" | Select-Object -First 1
+          $wxLibPath = $libFile.Directory.FullName
+          
+          # Buscamos la carpeta de las DLLs (donde está wxmsw324u_core_vc14x_x64.dll)
+          $wxBinPath = (Get-ChildItem -Path $wxBase -Recurse -Filter "wxmsw324u_core_vc14x_x64.dll" | Select-Object -First 1).Directory.FullName
+
+          echo "Configuración: $wxSetupInc"
+          echo "Librerías: $wxLibPath"
 
           $exeName = "detector_$env:TS.exe"
 
@@ -72,12 +78,15 @@ jobs:
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
 
-          # Compilación - IMPORTANTE: Añadimos /I"$wxSetupInc" antes que la de include general
-          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxSetupInc`" /I`"$wxInc`" /D`"__WXMSW__`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
+          # Compilación (Usamos comillas escapadas para las rutas con espacios o caracteres especiales)
+          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxSetupInc`" /I`"$wxBase\include`" /D`"__WXMSW__`" /D`"WXUSINGDLL`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          if (Test-Path "$cvBin\opencv_world4130.dll") { copy "$cvBin\opencv_world4130.dll" . }
+          # Copiar DLLs necesarias
+          copy "$cvBin\opencv_world4130.dll" .
+          copy "$wxBinPath\*.dll" .
+          
           $vcRedistDir = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC\v143\x64\Microsoft.VC143.CRT"
           if (Test-Path $vcRedistDir) {
               copy "$vcRedistDir\msvcp140.dll" .
