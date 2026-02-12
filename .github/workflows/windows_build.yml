@@ -8,16 +8,25 @@ jobs:
       - name: Descargar codigo fuente
         uses: actions/checkout@v4
 
-      - name: Cache OpenCV
-        id: cache-opencv
+      - name: Cache Dependencias (OpenCV y wxWidgets)
+        id: cache-deps
         uses: actions/cache@v4
         with:
-          path: C:\tools\opencv
-          key: ${{ runner.os }}-opencv-4.13.0-v2 # Cambié la key para forzar un cache limpio
+          path: |
+            C:\tools\opencv
+            ${{ github.workspace }}\vcpkg_installed
+          key: ${{ runner.os }}-deps-v3-${{ hashFiles('**/vcpkg.json') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-v3-
 
       - name: Instalar OpenCV
-        if: steps.cache-opencv.outputs.cache-hit != 'true'
+        if: steps.cache-deps.outputs.cache-hit != 'true'
         run: choco install opencv -y
+
+      - name: Instalar wxWidgets via vcpkg
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
+          vcpkg install wxwidgets:x64-windows
 
       - name: Generar Timestamp
         id: times
@@ -26,28 +35,38 @@ jobs:
           $timestamp = Get-Date -Format "MMdd_HHmm"
           echo "timestamp=$timestamp" >> $env:GITHUB_OUTPUT
 
-      - name: Compilar con Flags de Compatibilidad
+      - name: Compilar con OpenCV y wxWidgets
         shell: powershell
         env:
           TS: ${{ steps.times.outputs.timestamp }}
         run: |
-          $libDir = "C:\tools\opencv\build\x64\vc16\lib"
-          $incDir = "C:\tools\opencv\build\include"
-          $binDir = "C:\tools\opencv\build\x64\vc16\bin"
+          # Rutas OpenCV
+          $cvLib = "C:\tools\opencv\build\x64\vc16\lib"
+          $cvInc = "C:\tools\opencv\build\include"
+          $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
           
+          # Rutas wxWidgets (vcpkg instala por defecto en esta ruta del runner)
+          $wxBase = "C:\vcpkg\installed\x64-windows"
+          $wxInc = "$wxBase\include"
+          $wxLib = "$wxBase\lib"
+
           $exeName = "detector_$env:TS.exe"
 
-          # 1. Compilar asegurando compatibilidad binaria absoluta (/MD)
-          # Añadimos /D "NDEBUG" para evitar que busque versiones de depuración de las DLLs
-          $msvcCmd = "cl.exe main.cpp /I`"$incDir`" /EHsc /MD /D `"NDEBUG`" /link /LIBPATH:`"$libDir`" opencv_world4130.lib user32.lib gdi32.lib advapi32.lib shell32.lib /OUT:$exeName"
+          # 1. Definir Flags de wxWidgets (Librerías base necesarias)
+          # Nota: Se agregan las librerías de sistema que requiere wxWidgets
+          $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
+          $cvLibs = "opencv_world4130.lib"
+          $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
+
+          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxInc`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLib`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # 2. Copiar la DLL de OpenCV
-          copy "$binDir\opencv_world4130.dll" .
-          
-          # 3. TRUCO EXTRA: Copiar las DLLs de Visual C++ por si la PC destino no las tiene
-          # Esto suele evitar el error 0xc0000904 si el sistema no está actualizado
+          # 2. Copiar DLLs necesarias para el artefacto
+          copy "$cvBin\opencv_world4130.dll" .
+          # Si usaste vcpkg dinámico, copiarías las dll de wx aquí, pero vcpkg suele linkear estático por defecto en x64-windows si no se especifica.
+
+          # 3. Copiar DLLs de Visual C++
           $vcRedistDir = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC\v143\x64\Microsoft.VC143.CRT"
           if (Test-Path $vcRedistDir) {
               copy "$vcRedistDir\msvcp140.dll" .
@@ -58,8 +77,7 @@ jobs:
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: detector-fix-${{ steps.times.outputs.timestamp }}
+          name: detector-wx-${{ steps.times.outputs.timestamp }}
           path: |
             *.exe
             *.dll
-
