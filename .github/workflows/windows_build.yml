@@ -1,4 +1,4 @@
-name: compila_final
+name: compila_final_dll_fix
 on: [push]
 
 jobs:
@@ -15,7 +15,7 @@ jobs:
           path: |
             C:\tools\opencv
             C:\tools\wxwidgets
-          key: ${{ runner.os }}-final-v1
+          key: ${{ runner.os }}-dll-fix-v1
 
       - name: Instalar OpenCV
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -25,7 +25,7 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: powershell
         run: |
-          # Usamos la version _Dev que sabemos que SI descarga correctamente
+          # Usamos el paquete _Dev que contiene las DLLs precompiladas
           $url_headers = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4-headers.7z"
           $url_dev_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Dev.7z"
           
@@ -34,7 +34,7 @@ jobs:
           echo "Descargando headers..."
           curl.exe -fL $url_headers -o wx_headers.7z --retry 3
           
-          echo "Descargando binarios Dev..."
+          echo "Descargando binarios..."
           curl.exe -fL $url_dev_libs -o wx_binaries.7z --retry 3
           
           echo "Extrayendo..."
@@ -53,7 +53,7 @@ jobs:
         env:
           TS: ${{ steps.times.outputs.timestamp }}
         run: |
-          # --- 1. CONFIGURACIÓN DE RUTAS ---
+          # 1. Configurar Rutas
           $cvBase = "C:\tools\opencv\build"
           $cvLib = "$cvBase\x64\vc16\lib"
           $cvInc = "$cvBase\include"
@@ -61,30 +61,20 @@ jobs:
           
           $wxBase = "C:\tools\wxwidgets"
           
-          # BUSQUEDA INTELIGENTE DE setup.h
-          # Buscamos el archivo setup.h dentro de una carpeta 'mswu' (Unicode Release)
+          # Detectar dónde está setup.h para saber la ruta base real
           $setupFile = Get-ChildItem -Path $wxBase -Recurse -Filter "setup.h" | Where-Object { $_.FullName -like "*mswu\wx\setup.h" } | Select-Object -First 1
           
-          if (!$setupFile) {
-              echo "ERROR CRITICO: No se encontro wx/setup.h. Listando estructura:"
-              Get-ChildItem -Path $wxBase -Depth 3
-              exit 1
-          }
+          if (!$setupFile) { echo "ERROR: No se encontró wx/setup.h"; exit 1 }
           
-          # La carpeta de inclusión es la que contiene 'wx/setup.h', es decir, la carpeta padre de 'wx'
           $wxSetupInc = $setupFile.Directory.Parent.FullName
-          # La carpeta de librerías (.lib) suele ser la carpeta padre de 'mswu'
+          # Esta es la carpeta que contiene tanto los .lib como las .dll
           $wxLibPath = $setupFile.Directory.Parent.Parent.FullName
           
-          echo "Ruta Setup detectada: $wxSetupInc"
-          echo "Ruta Libs detectada: $wxLibPath"
+          echo "Ruta de librerias detectada: $wxLibPath"
 
           $exeName = "detector_$env:TS.exe"
 
-          # --- 2. COMPILACIÓN ---
-          # Flags clave:
-          # /MD -> Usar runtime dinámico (compatible con las DLLs que bajamos)
-          # WXUSINGDLL -> Obligatorio porque bajamos el paquete _Dev
+          # 2. Compilar
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
@@ -93,34 +83,34 @@ jobs:
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # --- 3. EMPAQUETADO QUIRÚRGICO (Evita crashes) ---
-          echo "Copiando dependencias exactas..."
+          # 3. COPIAR DLLS (Corrección Directa)
+          echo "Copiando dependencias..."
           
-          # Copiamos OpenCV
+          # Copiar OpenCV
           copy "$cvBin\opencv_world4130.dll" .
           
-          # Copiamos SOLO las DLLs de wxWidgets Release (32u)
-          # Buscamos wxbase32u...dll y wxmsw32u_core...dll donde sea que estén
-          $wxDlls = Get-ChildItem -Path $wxBase -Recurse -Include "wxbase32u_*.dll", "wxmsw32u_core_*.dll"
-          foreach ($dll in $wxDlls) {
-              echo "Copiando wxDLL: $($dll.Name)"
-              copy $dll.FullName .
-          }
-
-          # Copiamos Runtime C++ (Evita error de msvcp140.dll)
+          # Copiar wxWidgets DLLs - Usamos la ruta $wxLibPath directamente
+          # El comodín *32u*.dll atrapa wxbase32u_...dll y wxmsw32u_core_...dll
+          # pero ignora las *32ud* (debug)
+          echo "Buscando DLLs en: $wxLibPath"
+          copy "$wxLibPath\wxbase32u*.dll" .
+          copy "$wxLibPath\wxmsw32u_core*.dll" .
+          
+          # Copiar Runtime VC++ (por si acaso)
           $sysDlls = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
           foreach ($dll in $sysDlls) {
               $found = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" -Recurse -Filter $dll | Select-Object -First 1
               if ($found) { copy $found.FullName . }
           }
           
-          echo "Archivos finales:"
+          # Verificación final en el log
+          echo "CONTENIDO DEL ARTEFACTO:"
           ls *.exe, *.dll
 
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: detector-final-${{ steps.times.outputs.timestamp }}
+          name: detector-funcional-${{ steps.times.outputs.timestamp }}
           path: |
             *.exe
             *.dll
