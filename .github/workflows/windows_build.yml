@@ -46,57 +46,78 @@ jobs:
           $timestamp = Get-Date -Format "MMdd_HHmm"
           echo "timestamp=$timestamp" >> $env:GITHUB_OUTPUT
 
-      - name: Compilar y Empaquetar Todo
+      name: compila_estatico
+on: [push]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Descargar codigo fuente
+        uses: actions/checkout@v4
+
+      - name: Cache Dependencias
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\tools\opencv
+            C:\tools\wxwidgets
+          key: ${{ runner.os }}-static-v1
+
+      - name: Instalar OpenCV
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: choco install opencv -y
+
+      - name: Descargar wxWidgets (Librerías Estáticas)
+        if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: powershell
-        env:
-          TS: ${{ steps.times.outputs.timestamp }}
         run: |
-          # 1. Configuración de rutas
+          # Descargamos los Headers y las LIBRERÍAS ESTÁTICAS (_Lib.7z)
+          $url_headers = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4-headers.7z"
+          $url_static_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Lib.7z"
+          
+          New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets
+          Invoke-WebRequest -Uri $url_headers -OutFile wx_headers.7z
+          Invoke-WebRequest -Uri $url_static_libs -OutFile wx_static.7z
+          
+          7z x wx_headers.7z -oC:\tools\wxwidgets
+          7z x wx_static.7z -oC:\tools\wxwidgets
+
+      - name: Compilar (Todo en un solo EXE)
+        shell: powershell
+        run: |
+          # 1. Rutas
           $cvLib = "C:\tools\opencv\build\x64\vc16\lib"
           $cvInc = "C:\tools\opencv\build\include"
           $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
+          
           $wxBase = "C:\tools\wxwidgets"
-          
-          # Detección de carpetas de wxWidgets
-          $setupDir = Get-ChildItem -Path $wxBase -Recurse -Filter "setup.h" | Where-Object { $_.FullName -like "*vc14x_x64_dll\mswu\wx\setup.h" } | Select-Object -First 1
-          $wxSetupInc = $setupDir.Directory.Parent.FullName
-          
-          $libFile = Get-ChildItem -Path $wxBase -Recurse -Filter "wxmsw32u_core.lib" | Select-Object -First 1
-          $wxLibPath = $libFile.Directory.FullName
-          
-          $exeName = "detector_$env:TS.exe"
+          $wxInc = "$wxBase\include"
+          # En estático, la carpeta es 'vc_x64_lib' (sin el 'dll')
+          $wxStaticLibPath = "$wxBase\lib\vc_x64_lib"
+          $wxSetupInc = "$wxStaticLibPath\mswu"
 
-          # 2. Compilación
+          # 2. Librerías (Nombres estáticos, nota que no tienen el '32u' en medio a veces)
+          # Usamos comodines para que MSVC encuentre las correctas
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
-          
-          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxSetupInc`" /I`"$wxBase\include`" /D`"__WXMSW__`" /D`"WXUSINGDLL`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
+
+          # 3. Compilación /MT (Multithreaded Static)
+          # USAMOS /MT para que incluso el runtime de C++ se meta al EXE
+          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxInc`" /I`"$wxSetupInc`" /D`"__WXMSW__`" /D`"NDEBUG`" /EHsc /MT /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxStaticLibPath`" $cvLibs $wxLibs $sysLibs /OUT:detector_estatico.exe"
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # 3. EMPAQUETADO FINAL (Filtro Release corregido)
-          echo "Copiando DLLs de wxWidgets (Solo Release)..."
-          # Filtramos: que tengan 'u' (Unicode) pero NO 'ud' (Unicode Debug) antes de la extensión
-          Get-ChildItem -Path "$wxBase\lib" -Recurse -Filter "*.dll" | Where-Object { $_.Name -match "u(_|vc|.\.)" -and $_.Name -notmatch "ud(_|vc|.\.)" } | Copy-Item -Destination "." -Force
-          
-          echo "Copiando OpenCV..."
-          if (Test-Path "$cvBin\opencv_world4130.dll") { copy "$cvBin\opencv_world4130.dll" . }
+          # 4. Solo necesitamos la DLL de OpenCV (porque OpenCV casi nunca se linkea estático por Choco)
+          copy "$cvBin\opencv_world4130.dll" .
 
-          echo "Copiando Redistribuibles de VC++..."
-          $dlls = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
-          foreach ($dll in $dlls) {
-              $found = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" -Recurse -Filter $dll | Select-Object -First 1
-              if ($found) { copy $found.FullName . }
-          }
-
-          echo "--- VERIFICACION FINAL ---"
-          Get-ChildItem -Path . -Include *.exe, *.dll -Name
-          
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: detector-final-${{ steps.times.outputs.timestamp }}
+          name: detector-estatico
           path: |
-            *.exe
-            *.dll
+            detector_estatico.exe
+            opencv_world4130.dll
+        
