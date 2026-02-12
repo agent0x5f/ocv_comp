@@ -46,53 +46,55 @@ jobs:
           $timestamp = Get-Date -Format "MMdd_HHmm"
           echo "timestamp=$timestamp" >> $env:GITHUB_OUTPUT
 
-      - name: Compilar Proyecto
+      - name: Compilar y Empaquetar Todo
         shell: powershell
         env:
           TS: ${{ steps.times.outputs.timestamp }}
         run: |
+          # 1. Configuración de rutas (Detección dinámica)
           $cvLib = "C:\tools\opencv\build\x64\vc16\lib"
           $cvInc = "C:\tools\opencv\build\include"
           $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
           
           $wxBase = "C:\tools\wxwidgets"
-          
-          # Buscamos la carpeta mswu (Release) específicamente
           $setupDir = Get-ChildItem -Path $wxBase -Recurse -Filter "setup.h" | Where-Object { $_.FullName -like "*vc14x_x64_dll\mswu\wx\setup.h" } | Select-Object -First 1
-          $wxSetupInc = $setupDir.Directory.Parent.FullName # Esto nos da la ruta hasta \mswu
+          $wxSetupInc = $setupDir.Directory.Parent.FullName
           
-          # Buscamos la carpeta de las librerías .lib
           $libFile = Get-ChildItem -Path $wxBase -Recurse -Filter "wxmsw32u_core.lib" | Select-Object -First 1
           $wxLibPath = $libFile.Directory.FullName
           
-          # Buscamos la carpeta de las DLLs (donde está wxmsw324u_core_vc14x_x64.dll)
+          # UBICACIÓN DE LAS DLLs de wxWidgets
           $wxBinPath = (Get-ChildItem -Path $wxBase -Recurse -Filter "wxmsw324u_core_vc14x_x64.dll" | Select-Object -First 1).Directory.FullName
-
-          echo "Configuración: $wxSetupInc"
-          echo "Librerías: $wxLibPath"
 
           $exeName = "detector_$env:TS.exe"
 
-          # Flags y Librerías
+          # 2. Compilación
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
 
-          # Compilación (Usamos comillas escapadas para las rutas con espacios o caracteres especiales)
           $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxSetupInc`" /I`"$wxBase\include`" /D`"__WXMSW__`" /D`"WXUSINGDLL`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # Copiar DLLs necesarias
+          # 3. SOLUCIÓN AL ERROR: Copiado masivo de dependencias
+          echo "Empaquetando dependencias..."
+          
+          # Copiamos la de OpenCV
           copy "$cvBin\opencv_world4130.dll" .
+          
+          # Copiamos TODAS las DLLs de wxWidgets que estén en la carpeta de binarios
+          # Esto incluye la core, base y cualquier otra que el compilador haya pedido
           copy "$wxBinPath\*.dll" .
           
+          # Copiamos las de Visual C++ (Redistributables)
           $vcRedistDir = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC\v143\x64\Microsoft.VC143.CRT"
-          if (Test-Path $vcRedistDir) {
-              copy "$vcRedistDir\msvcp140.dll" .
-              copy "$vcRedistDir\vcruntime140.dll" .
-              copy "$vcRedistDir\vcruntime140_1.dll" .
-          }
+          copy "$vcRedistDir\msvcp140.dll" .
+          copy "$vcRedistDir\vcruntime140.dll" .
+          copy "$vcRedistDir\vcruntime140_1.dll" .
+
+          echo "Contenido final de la carpeta:"
+          ls
 
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
