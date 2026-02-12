@@ -25,21 +25,29 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: powershell
         run: |
+          # Usamos los links directos de GitHub pero con una validación de tamaño
           $url_headers = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4-headers.7z"
           $url_static_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Lib.7z"
           
           New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets
           
-          echo "Descargando headers con curl..."
-          curl.exe -L $url_headers -o wx_headers.7z --retry 3 --retry-delay 5
+          echo "Descargando headers..."
+          curl.exe -fL $url_headers -o wx_headers.7z --retry 5
           
-          echo "Descargando librerias estaticas con curl..."
-          curl.exe -L $url_static_libs -o wx_static.7z --retry 3 --retry-delay 5
+          echo "Descargando librerias estaticas..."
+          # Agregamos -f para que curl falle si el servidor devuelve un error 404/500 en lugar de bajar basura
+          curl.exe -fL $url_static_libs -o wx_static.7z --retry 5
+          
+          # Verificación de seguridad: si el archivo es muy pequeño, algo salió mal
+          $size = (Get-Item wx_static.7z).Length
+          if ($size -lt 1000) {
+            echo "Error: El archivo descargado es demasiado pequeño ($size bytes). Reintentando con fuente alternativa..."
+            curl.exe -fL "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Lib.7z" -o wx_static.7z
+          }
           
           echo "Extrayendo archivos..."
           7z x wx_headers.7z -oC:\tools\wxwidgets -y
           7z x wx_static.7z -oC:\tools\wxwidgets -y
-
       - name: Generar Timestamp
         id: times
         shell: powershell
