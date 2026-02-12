@@ -1,4 +1,4 @@
-name: compila
+name: compila_estatico
 on: [push]
 
 jobs:
@@ -15,65 +15,16 @@ jobs:
           path: |
             C:\tools\opencv
             C:\tools\wxwidgets
-          key: ${{ runner.os }}-deps-v6
+          key: ${{ runner.os }}-static-v2
 
       - name: Instalar OpenCV
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: choco install opencv -y
 
-      - name: Descargar wxWidgets (Binarios Oficiales)
+      - name: Descargar wxWidgets (Estatico)
         if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: powershell
         run: |
-          $url_headers = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4-headers.7z"
-          $url_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Dev.7z"
-          New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets
-          Invoke-WebRequest -Uri $url_headers -OutFile wx_headers.7z
-          Invoke-WebRequest -Uri $url_libs -OutFile wx_libs.7z
-          7z x wx_headers.7z -oC:\tools\wxwidgets
-          7z x wx_libs.7z -oC:\tools\wxwidgets
-
-      - name: Depurar Rutas (Verificar setup.h)
-        shell: powershell
-        run: |
-          echo "Buscando wx/setup.h en C:\tools\wxwidgets..."
-          Get-ChildItem -Path C:\tools\wxwidgets -Filter "setup.h" -Recurse
-
-      - name: Generar Timestamp
-        id: times
-        shell: powershell
-        run: |
-          $timestamp = Get-Date -Format "MMdd_HHmm"
-          echo "timestamp=$timestamp" >> $env:GITHUB_OUTPUT
-
-      name: compila_estatico
-on: [push]
-
-jobs:
-  build:
-    runs-on: windows-latest
-    steps:
-      - name: Descargar codigo fuente
-        uses: actions/checkout@v4
-
-      - name: Cache Dependencias
-        id: cache-deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            C:\tools\opencv
-            C:\tools\wxwidgets
-          key: ${{ runner.os }}-static-v1
-
-      - name: Instalar OpenCV
-        if: steps.cache-deps.outputs.cache-hit != 'true'
-        run: choco install opencv -y
-
-      - name: Descargar wxWidgets (Librerías Estáticas)
-        if: steps.cache-deps.outputs.cache-hit != 'true'
-        shell: powershell
-        run: |
-          # Descargamos los Headers y las LIBRERÍAS ESTÁTICAS (_Lib.7z)
           $url_headers = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4-headers.7z"
           $url_static_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Lib.7z"
           
@@ -84,40 +35,47 @@ jobs:
           7z x wx_headers.7z -oC:\tools\wxwidgets
           7z x wx_static.7z -oC:\tools\wxwidgets
 
-      - name: Compilar (Todo en un solo EXE)
+      - name: Generar Timestamp
+        id: times
         shell: powershell
         run: |
-          # 1. Rutas
+          $timestamp = Get-Date -Format "MMdd_HHmm"
+          echo "timestamp=$timestamp" >> $env:GITHUB_OUTPUT
+
+      - name: Compilar Proyecto
+        shell: powershell
+        env:
+          TS: ${{ steps.times.outputs.timestamp }}
+        run: |
           $cvLib = "C:\tools\opencv\build\x64\vc16\lib"
           $cvInc = "C:\tools\opencv\build\include"
           $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
           
           $wxBase = "C:\tools\wxwidgets"
-          $wxInc = "$wxBase\include"
-          # En estático, la carpeta es 'vc_x64_lib' (sin el 'dll')
           $wxStaticLibPath = "$wxBase\lib\vc_x64_lib"
           $wxSetupInc = "$wxStaticLibPath\mswu"
 
-          # 2. Librerías (Nombres estáticos, nota que no tienen el '32u' en medio a veces)
-          # Usamos comodines para que MSVC encuentre las correctas
+          $exeName = "detector_estatico_$env:TS.exe"
+
+          # Librerias necesarias
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
 
-          # 3. Compilación /MT (Multithreaded Static)
-          # USAMOS /MT para que incluso el runtime de C++ se meta al EXE
-          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxInc`" /I`"$wxSetupInc`" /D`"__WXMSW__`" /D`"NDEBUG`" /EHsc /MT /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxStaticLibPath`" $cvLibs $wxLibs $sysLibs /OUT:detector_estatico.exe"
+          # IMPORTANTE: Usamos /MT para incluir el runtime de C++ y evitar errores de DLL
+          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxBase\include`" /I`"$wxSetupInc`" /D`"__WXMSW__`" /D`"NDEBUG`" /EHsc /MT /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxStaticLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # 4. Solo necesitamos la DLL de OpenCV (porque OpenCV casi nunca se linkea estático por Choco)
-          copy "$cvBin\opencv_world4130.dll" .
+          # Solo necesitamos la DLL de OpenCV
+          if (Test-Path "$cvBin\opencv_world4130.dll") {
+              copy "$cvBin\opencv_world4130.dll" .
+          }
 
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: detector-estatico
+          name: detector-estatico-${{ steps.times.outputs.timestamp }}
           path: |
-            detector_estatico.exe
-            opencv_world4130.dll
-        
+            *.exe
+            *.dll
