@@ -1,4 +1,4 @@
-name: compila_estatico
+name: compila_final
 on: [push]
 
 jobs:
@@ -15,37 +15,31 @@ jobs:
           path: |
             C:\tools\opencv
             C:\tools\wxwidgets
-          key: ${{ runner.os }}-static-v3
+          key: ${{ runner.os }}-final-v1
 
       - name: Instalar OpenCV
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: choco install opencv -y
 
-      - name: Descargar wxWidgets (Estatico)
+      - name: Descargar wxWidgets (Dev/DLL)
         if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: powershell
         run: |
-          # URLS CORREGIDAS PARA 3.2.4
+          # Usamos la version _Dev que sabemos que SI descarga correctamente
           $url_headers = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4-headers.7z"
-          # El archivo 'Dev' es el que contiene las librerías estáticas para MSVC
-          $url_static_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Dev.7z"
+          $url_dev_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Dev.7z"
           
           New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets
           
           echo "Descargando headers..."
           curl.exe -fL $url_headers -o wx_headers.7z --retry 3
           
-          echo "Descargando librerias (Dev/Static)..."
-          curl.exe -fL $url_static_libs -o wx_static.7z --retry 3
+          echo "Descargando binarios Dev..."
+          curl.exe -fL $url_dev_libs -o wx_binaries.7z --retry 3
           
-          if (!(Test-Path wx_static.7z)) {
-            echo "ERROR: No se pudo descargar el archivo de librerias."
-            exit 1
-          }
-
-          echo "Extrayendo archivos..."
+          echo "Extrayendo..."
           7z x wx_headers.7z -oC:\tools\wxwidgets -y
-          7z x wx_static.7z -oC:\tools\wxwidgets -y
+          7z x wx_binaries.7z -oC:\tools\wxwidgets -y
 
       - name: Generar Timestamp
         id: times
@@ -54,41 +48,79 @@ jobs:
           $timestamp = Get-Date -Format "MMdd_HHmm"
           echo "timestamp=$timestamp" >> $env:GITHUB_OUTPUT
 
-      - name: Compilar Proyecto Estatico
+      - name: Compilar y Empaquetar
         shell: powershell
         env:
           TS: ${{ steps.times.outputs.timestamp }}
         run: |
-          $cvLib = "C:\tools\opencv\build\x64\vc16\lib"
-          $cvInc = "C:\tools\opencv\build\include"
-          $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
+          # --- 1. CONFIGURACIÓN DE RUTAS ---
+          $cvBase = "C:\tools\opencv\build"
+          $cvLib = "$cvBase\x64\vc16\lib"
+          $cvInc = "$cvBase\include"
+          $cvBin = "$cvBase\x64\vc16\bin"
           
           $wxBase = "C:\tools\wxwidgets"
-          # Carpeta correcta para la version estatica
-          $wxStaticLibPath = "$wxBase\lib\vc_x64_lib"
-          $wxSetupInc = "$wxStaticLibPath\mswu"
+          
+          # BUSQUEDA INTELIGENTE DE setup.h
+          # Buscamos el archivo setup.h dentro de una carpeta 'mswu' (Unicode Release)
+          $setupFile = Get-ChildItem -Path $wxBase -Recurse -Filter "setup.h" | Where-Object { $_.FullName -like "*mswu\wx\setup.h" } | Select-Object -First 1
+          
+          if (!$setupFile) {
+              echo "ERROR CRITICO: No se encontro wx/setup.h. Listando estructura:"
+              Get-ChildItem -Path $wxBase -Depth 3
+              exit 1
+          }
+          
+          # La carpeta de inclusión es la que contiene 'wx/setup.h', es decir, la carpeta padre de 'wx'
+          $wxSetupInc = $setupFile.Directory.Parent.FullName
+          # La carpeta de librerías (.lib) suele ser la carpeta padre de 'mswu'
+          $wxLibPath = $setupFile.Directory.Parent.Parent.FullName
+          
+          echo "Ruta Setup detectada: $wxSetupInc"
+          echo "Ruta Libs detectada: $wxLibPath"
 
-          $exeName = "detector_estatico_$env:TS.exe"
+          $exeName = "detector_$env:TS.exe"
 
-          # Librerias: En modo estatico usamos las versiones que terminan en 'u'
+          # --- 2. COMPILACIÓN ---
+          # Flags clave:
+          # /MD -> Usar runtime dinámico (compatible con las DLLs que bajamos)
+          # WXUSINGDLL -> Obligatorio porque bajamos el paquete _Dev
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
 
-          # /MT vincula el runtime de C++ de forma estatica (evita error de falta de vcruntime140.dll)
-          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxBase\include`" /I`"$wxSetupInc`" /D`"__WXMSW__`" /D`"NDEBUG`" /EHsc /MT /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxStaticLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
+          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxBase\include`" /I`"$wxSetupInc`" /D`"__WXMSW__`" /D`"WXUSINGDLL`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # Solo llevamos la DLL de OpenCV
-          if (Test-Path "$cvBin\opencv_world4130.dll") {
-              copy "$cvBin\opencv_world4130.dll" .
+          # --- 3. EMPAQUETADO QUIRÚRGICO (Evita crashes) ---
+          echo "Copiando dependencias exactas..."
+          
+          # Copiamos OpenCV
+          copy "$cvBin\opencv_world4130.dll" .
+          
+          # Copiamos SOLO las DLLs de wxWidgets Release (32u)
+          # Buscamos wxbase32u...dll y wxmsw32u_core...dll donde sea que estén
+          $wxDlls = Get-ChildItem -Path $wxBase -Recurse -Include "wxbase32u_*.dll", "wxmsw32u_core_*.dll"
+          foreach ($dll in $wxDlls) {
+              echo "Copiando wxDLL: $($dll.Name)"
+              copy $dll.FullName .
           }
+
+          # Copiamos Runtime C++ (Evita error de msvcp140.dll)
+          $sysDlls = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+          foreach ($dll in $sysDlls) {
+              $found = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" -Recurse -Filter $dll | Select-Object -First 1
+              if ($found) { copy $found.FullName . }
+          }
+          
+          echo "Archivos finales:"
+          ls *.exe, *.dll
 
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: detector-estatico-${{ steps.times.outputs.timestamp }}
+          name: detector-final-${{ steps.times.outputs.timestamp }}
           path: |
             *.exe
             *.dll
