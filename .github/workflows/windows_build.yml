@@ -8,24 +8,33 @@ jobs:
       - name: Descargar codigo fuente
         uses: actions/checkout@v4
 
-      - name: Cache Dependencias
-        id: cache-deps
+      - name: Cache OpenCV
+        id: cache-opencv
         uses: actions/cache@v4
         with:
-          path: |
-            C:\tools\opencv
-            ${{ github.workspace }}\packages
-          key: ${{ runner.os }}-deps-v4
+          path: C:\tools\opencv
+          key: ${{ runner.os }}-opencv-4.13.0
 
       - name: Instalar OpenCV
-        if: steps.cache-deps.outputs.cache-hit != 'true'
+        if: steps.cache-opencv.outputs.cache-hit != 'true'
         run: choco install opencv -y
 
-      - name: Instalar wxWidgets via NuGet
-        # Usamos la versión 3.2.4 que es muy estable
+      - name: Descargar wxWidgets (Binarios Oficiales)
+        shell: powershell
         run: |
-          nuget install wxwidgets-msvc-143-x64 -Version 3.2.4 -OutputDirectory ${{ github.workspace }}\packages
-
+          # Descargamos los headers y los binarios para MSVC 143 (VS 2022) x64
+          $url_headers = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4-headers.7z"
+          $url_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Dev.7z"
+          
+          New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets
+          
+          Invoke-WebRequest -Uri $url_headers -OutFile wx_headers.7z
+          Invoke-WebRequest -Uri $url_libs -OutFile wx_libs.7z
+          
+          # Extraer usando 7zip (ya viene en el runner)
+          7z x wx_headers.7z -oC:\tools\wxwidgets
+          7z x wx_libs.7z -oC:\tools\wxwidgets
+          
       - name: Generar Timestamp
         id: times
         shell: powershell
@@ -38,22 +47,20 @@ jobs:
         env:
           TS: ${{ steps.times.outputs.timestamp }}
         run: |
-          # 1. Rutas OpenCV
           $cvLib = "C:\tools\opencv\build\x64\vc16\lib"
           $cvInc = "C:\tools\opencv\build\include"
           $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
           
-          # 2. Rutas wxWidgets (Estructura de NuGet)
-          $wxPkgPath = Get-ChildItem -Directory "${{ github.workspace }}\packages\wxwidgets-msvc-143-x64*" | Select-Object -First 1
-          $wxBase = "$($wxPkgPath.FullName)\build\native"
+          # Estructura de los binarios oficiales
+          $wxBase = "C:\tools\wxwidgets"
           $wxInc = "$wxBase\include"
-          # NuGet separa los headers de configuración en carpetas específicas
-          $wxSetupInc = "$wxBase\lib\mswu" 
-          $wxLibPath = "$wxBase\lib"
+          $wxLibPath = "$wxBase\lib\vc_x64_lib"
+          $wxSetupInc = "$wxLibPath\mswu" 
 
           $exeName = "detector_$env:TS.exe"
 
-          # 3. Librerías
+          # Nota: En la 3.2.4 los nombres pueden ser wxmsw32u.lib o similares
+          # Usamos comodines o nombres específicos de los binarios Dev
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
@@ -64,6 +71,7 @@ jobs:
 
           # 4. Artefactos
           copy "$cvBin\opencv_world4130.dll" .
+          # Los binarios "Dev" de wxWidgets suelen ser estáticos, no necesitas copiar sus DLLs.
           
           $vcRedistDir = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC\v143\x64\Microsoft.VC143.CRT"
           if (Test-Path $vcRedistDir) {
@@ -75,7 +83,7 @@ jobs:
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: detector-nuget-${{ steps.times.outputs.timestamp }}
+          name: detector-direct-${{ steps.times.outputs.timestamp }}
           path: |
             *.exe
             *.dll
