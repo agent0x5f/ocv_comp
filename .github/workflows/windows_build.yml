@@ -51,19 +51,22 @@ jobs:
         env:
           TS: ${{ steps.times.outputs.timestamp }}
         run: |
-          # 1. Rutas y Detección
+          # 1. Configuración de rutas
           $cvLib = "C:\tools\opencv\build\x64\vc16\lib"
           $cvInc = "C:\tools\opencv\build\include"
           $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
           $wxBase = "C:\tools\wxwidgets"
           
+          # Detección de carpetas de wxWidgets
           $setupDir = Get-ChildItem -Path $wxBase -Recurse -Filter "setup.h" | Where-Object { $_.FullName -like "*vc14x_x64_dll\mswu\wx\setup.h" } | Select-Object -First 1
           $wxSetupInc = $setupDir.Directory.Parent.FullName
-          $wxLibPath = (Get-ChildItem -Path $wxBase -Recurse -Filter "wxmsw32u_core.lib" | Select-Object -First 1).Directory.FullName
+          
+          $libFile = Get-ChildItem -Path $wxBase -Recurse -Filter "wxmsw32u_core.lib" | Select-Object -First 1
+          $wxLibPath = $libFile.Directory.FullName
           
           $exeName = "detector_$env:TS.exe"
 
-          # 2. Compilación (Release /MD)
+          # 2. Compilación
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
@@ -72,11 +75,10 @@ jobs:
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # 3. EMPAQUETADO FILTRADO (Solo Release)
+          # 3. EMPAQUETADO FINAL (Filtro Release corregido)
           echo "Copiando DLLs de wxWidgets (Solo Release)..."
-          # Explicación del filtro: Buscamos DLLs que NO tengan 'd' al final del nombre base
-          # Las de release son wxmsw32u_core.dll, las de debug son wxmsw32ud_core.dll
-          Get-ChildItem -Path "$wxBase\lib" -Recurse -Filter "*.dll" | Where-Object { $_.Name -notlike "*ud_*.dll" -and $_.Name -notlike "*ud.dll" } | Copy-Item -Destination "." -Force
+          # Filtramos: que tengan 'u' (Unicode) pero NO 'ud' (Unicode Debug) antes de la extensión
+          Get-ChildItem -Path "$wxBase\lib" -Recurse -Filter "*.dll" | Where-Object { $_.Name -match "u(_|vc|.\.)" -and $_.Name -notmatch "ud(_|vc|.\.)" } | Copy-Item -Destination "." -Force
           
           echo "Copiando OpenCV..."
           if (Test-Path "$cvBin\opencv_world4130.dll") { copy "$cvBin\opencv_world4130.dll" . }
@@ -88,10 +90,8 @@ jobs:
               if ($found) { copy $found.FullName . }
           }
 
-          echo "--- VERIFICACIÓN DE ARCHIVOS ---"
-          ls *.exe
-          echo "DLLs de wxWidgets detectadas:"
-          ls wx*.dll
+          echo "--- VERIFICACION FINAL ---"
+          Get-ChildItem -Path . -Include *.exe, *.dll -Name
           
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
