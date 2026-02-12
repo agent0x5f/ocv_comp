@@ -51,49 +51,48 @@ jobs:
         env:
           TS: ${{ steps.times.outputs.timestamp }}
         run: |
-          # 1. Configuración de rutas (Detección dinámica)
+          # 1. Rutas (Detección dinámica que ya funciona)
           $cvLib = "C:\tools\opencv\build\x64\vc16\lib"
           $cvInc = "C:\tools\opencv\build\include"
           $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
-          
           $wxBase = "C:\tools\wxwidgets"
+          
           $setupDir = Get-ChildItem -Path $wxBase -Recurse -Filter "setup.h" | Where-Object { $_.FullName -like "*vc14x_x64_dll\mswu\wx\setup.h" } | Select-Object -First 1
           $wxSetupInc = $setupDir.Directory.Parent.FullName
-          
           $libFile = Get-ChildItem -Path $wxBase -Recurse -Filter "wxmsw32u_core.lib" | Select-Object -First 1
           $wxLibPath = $libFile.Directory.FullName
-          
-          # UBICACIÓN DE LAS DLLs de wxWidgets
           $wxBinPath = (Get-ChildItem -Path $wxBase -Recurse -Filter "wxmsw324u_core_vc14x_x64.dll" | Select-Object -First 1).Directory.FullName
 
           $exeName = "detector_$env:TS.exe"
 
-          # 2. Compilación
+          # 2. Compilación (Ya exitosa)
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
-
           $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxSetupInc`" /I`"$wxBase\include`" /D`"__WXMSW__`" /D`"WXUSINGDLL`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
-          
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # 3. SOLUCIÓN AL ERROR: Copiado masivo de dependencias
+          # 3. EMPAQUETADO ROBUSTO
           echo "Empaquetando dependencias..."
           
-          # Copiamos la de OpenCV
-          copy "$cvBin\opencv_world4130.dll" .
+          # Copiar OpenCV
+          if (Test-Path "$cvBin\opencv_world4130.dll") { copy "$cvBin\opencv_world4130.dll" . }
           
-          # Copiamos TODAS las DLLs de wxWidgets que estén en la carpeta de binarios
-          # Esto incluye la core, base y cualquier otra que el compilador haya pedido
-          copy "$wxBinPath\*.dll" .
-          
-          # Copiamos las de Visual C++ (Redistributables)
-          $vcRedistDir = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC\v143\x64\Microsoft.VC143.CRT"
-          copy "$vcRedistDir\msvcp140.dll" .
-          copy "$vcRedistDir\vcruntime140.dll" .
-          copy "$vcRedistDir\vcruntime140_1.dll" .
+          # Copiar wxWidgets DLLs
+          if (Test-Path "$wxBinPath\*.dll") { copy "$wxBinPath\*.dll" . }
 
-          echo "Contenido final de la carpeta:"
+          # Copiar Redistribuibles de VC++ (Búsqueda dinámica para evitar errores de ruta)
+          echo "Buscando DLLs de tiempo de ejecución..."
+          $dlls = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+          foreach ($dll in $dlls) {
+              $found = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" -Recurse -Filter $dll | Select-Object -First 1
+              if ($found) {
+                  copy $found.FullName .
+                  echo "Copiada: $($found.FullName)"
+              }
+          }
+
+          echo "Contenido final listo para subir:"
           ls
 
       - name: Subir Artefacto
