@@ -15,7 +15,7 @@ jobs:
           path: |
             C:\tools\opencv
             C:\tools\wxwidgets
-          key: ${{ runner.os }}-static-v2
+          key: ${{ runner.os }}-static-v3
 
       - name: Instalar OpenCV
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -25,29 +25,22 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: powershell
         run: |
-          # Usamos los links directos de GitHub pero con una validación de tamaño
+          # URLS VERIFICADAS para 3.2.4
           $url_headers = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4-headers.7z"
           $url_static_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Lib.7z"
           
           New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets
           
           echo "Descargando headers..."
-          curl.exe -fL $url_headers -o wx_headers.7z --retry 5
+          curl.exe -fL $url_headers -o wx_headers.7z --retry 3
           
           echo "Descargando librerias estaticas..."
-          # Agregamos -f para que curl falle si el servidor devuelve un error 404/500 en lugar de bajar basura
-          curl.exe -fL $url_static_libs -o wx_static.7z --retry 5
-          
-          # Verificación de seguridad: si el archivo es muy pequeño, algo salió mal
-          $size = (Get-Item wx_static.7z).Length
-          if ($size -lt 1000) {
-            echo "Error: El archivo descargado es demasiado pequeño ($size bytes). Reintentando con fuente alternativa..."
-            curl.exe -fL "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Lib.7z" -o wx_static.7z
-          }
+          curl.exe -fL $url_static_libs -o wx_static.7z --retry 3
           
           echo "Extrayendo archivos..."
           7z x wx_headers.7z -oC:\tools\wxwidgets -y
           7z x wx_static.7z -oC:\tools\wxwidgets -y
+
       - name: Generar Timestamp
         id: times
         shell: powershell
@@ -55,7 +48,7 @@ jobs:
           $timestamp = Get-Date -Format "MMdd_HHmm"
           echo "timestamp=$timestamp" >> $env:GITHUB_OUTPUT
 
-      - name: Compilar Proyecto
+      - name: Compilar Proyecto Estatico
         shell: powershell
         env:
           TS: ${{ steps.times.outputs.timestamp }}
@@ -65,22 +58,23 @@ jobs:
           $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
           
           $wxBase = "C:\tools\wxwidgets"
+          # Carpeta correcta para la version estatica
           $wxStaticLibPath = "$wxBase\lib\vc_x64_lib"
           $wxSetupInc = "$wxStaticLibPath\mswu"
 
           $exeName = "detector_estatico_$env:TS.exe"
 
-          # Librerias necesarias
+          # Librerias: En modo estatico usamos las versiones que terminan en 'u'
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
 
-          # IMPORTANTE: Usamos /MT para incluir el runtime de C++ y evitar errores de DLL
+          # /MT vincula el runtime de C++ de forma estatica (evita error de falta de vcruntime140.dll)
           $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxBase\include`" /I`"$wxSetupInc`" /D`"__WXMSW__`" /D`"NDEBUG`" /EHsc /MT /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxStaticLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # Solo necesitamos la DLL de OpenCV
+          # Solo llevamos la DLL de OpenCV
           if (Test-Path "$cvBin\opencv_world4130.dll") {
               copy "$cvBin\opencv_world4130.dll" .
           }
