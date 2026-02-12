@@ -8,24 +8,23 @@ jobs:
       - name: Descargar codigo fuente
         uses: actions/checkout@v4
 
-      - name: Cache Dependencias (OpenCV y wxWidgets)
+      - name: Cache Dependencias
         id: cache-deps
         uses: actions/cache@v4
         with:
           path: |
             C:\tools\opencv
-            C:\tools\wxwidgets
-          key: ${{ runner.os }}-choco-deps-v1
+            ${{ github.workspace }}\packages
+          key: ${{ runner.os }}-deps-v4
 
       - name: Instalar OpenCV
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: choco install opencv -y
 
-      - name: Instalar wxWidgets (Binarios MSVC)
-        if: steps.cache-deps.outputs.cache-hit != 'true'
+      - name: Instalar wxWidgets via NuGet
+        # Usamos la versión 3.2.4 que es muy estable
         run: |
-          # Instalamos la versión para MSVC (v143 corresponde a VS 2022)
-          choco install wxwidgets-msvc -y --params="'/InstallDir:C:\tools\wxwidgets'"
+          nuget install wxwidgets-msvc-143-x64 -Version 3.2.4 -OutputDirectory ${{ github.workspace }}\packages
 
       - name: Generar Timestamp
         id: times
@@ -44,28 +43,28 @@ jobs:
           $cvInc = "C:\tools\opencv\build\include"
           $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
           
-          # 2. Rutas wxWidgets (ajustadas a la estructura de Choco)
-          $wxBase = "C:\tools\wxwidgets\lib\vc_x64_lib"
-          $wxInc  = "C:\tools\wxwidgets\include"
-          $wxSetupInc = "C:\tools\wxwidgets\lib\vc_x64_lib\mswu" # Necesario para wx/setup.h
+          # 2. Rutas wxWidgets (Estructura de NuGet)
+          $wxPkgPath = Get-ChildItem -Directory "${{ github.workspace }}\packages\wxwidgets-msvc-143-x64*" | Select-Object -First 1
+          $wxBase = "$($wxPkgPath.FullName)\build\native"
+          $wxInc = "$wxBase\include"
+          # NuGet separa los headers de configuración en carpetas específicas
+          $wxSetupInc = "$wxBase\lib\mswu" 
+          $wxLibPath = "$wxBase\lib"
 
           $exeName = "detector_$env:TS.exe"
 
-          # 3. Librerías (wxWidgets 3.2+ usa nombres como wxmsw32u_core.lib)
-          # El asterisco ayuda si la versión exacta (32) cambia ligeramente
+          # 3. Librerías
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
 
-          # Compilación (Importante: incluimos $wxSetupInc para las macros de configuración)
-          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxInc`" /I`"$wxSetupInc`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxBase`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
+          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxInc`" /I`"$wxSetupInc`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # 4. Preparar el artefacto (DLLs)
+          # 4. Artefactos
           copy "$cvBin\opencv_world4130.dll" .
           
-          # Copiar redistribuibles de VC++
           $vcRedistDir = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC\v143\x64\Microsoft.VC143.CRT"
           if (Test-Path $vcRedistDir) {
               copy "$vcRedistDir\msvcp140.dll" .
@@ -76,7 +75,7 @@ jobs:
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: detector-choco-${{ steps.times.outputs.timestamp }}
+          name: detector-nuget-${{ steps.times.outputs.timestamp }}
           path: |
             *.exe
             *.dll
