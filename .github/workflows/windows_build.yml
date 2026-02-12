@@ -14,19 +14,18 @@ jobs:
         with:
           path: |
             C:\tools\opencv
-            ${{ github.workspace }}\vcpkg_installed
-          key: ${{ runner.os }}-deps-v3-${{ hashFiles('**/vcpkg.json') }}
-          restore-keys: |
-            ${{ runner.os }}-deps-v3-
+            C:\tools\wxwidgets
+          key: ${{ runner.os }}-choco-deps-v1
 
       - name: Instalar OpenCV
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: choco install opencv -y
 
-      - name: Instalar wxWidgets via vcpkg
+      - name: Instalar wxWidgets (Binarios MSVC)
         if: steps.cache-deps.outputs.cache-hit != 'true'
         run: |
-          vcpkg install wxwidgets:x64-windows
+          # Instalamos la versión para MSVC (v143 corresponde a VS 2022)
+          choco install wxwidgets-msvc -y --params="'/InstallDir:C:\tools\wxwidgets'"
 
       - name: Generar Timestamp
         id: times
@@ -40,33 +39,33 @@ jobs:
         env:
           TS: ${{ steps.times.outputs.timestamp }}
         run: |
-          # Rutas OpenCV
+          # 1. Rutas OpenCV
           $cvLib = "C:\tools\opencv\build\x64\vc16\lib"
           $cvInc = "C:\tools\opencv\build\include"
           $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
           
-          # Rutas wxWidgets (vcpkg instala por defecto en esta ruta del runner)
-          $wxBase = "C:\vcpkg\installed\x64-windows"
-          $wxInc = "$wxBase\include"
-          $wxLib = "$wxBase\lib"
+          # 2. Rutas wxWidgets (ajustadas a la estructura de Choco)
+          $wxBase = "C:\tools\wxwidgets\lib\vc_x64_lib"
+          $wxInc  = "C:\tools\wxwidgets\include"
+          $wxSetupInc = "C:\tools\wxwidgets\lib\vc_x64_lib\mswu" # Necesario para wx/setup.h
 
           $exeName = "detector_$env:TS.exe"
 
-          # 1. Definir Flags de wxWidgets (Librerías base necesarias)
-          # Nota: Se agregan las librerías de sistema que requiere wxWidgets
+          # 3. Librerías (wxWidgets 3.2+ usa nombres como wxmsw32u_core.lib)
+          # El asterisco ayuda si la versión exacta (32) cambia ligeramente
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
 
-          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxInc`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLib`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
+          # Compilación (Importante: incluimos $wxSetupInc para las macros de configuración)
+          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxInc`" /I`"$wxSetupInc`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxBase`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # 2. Copiar DLLs necesarias para el artefacto
+          # 4. Preparar el artefacto (DLLs)
           copy "$cvBin\opencv_world4130.dll" .
-          # Si usaste vcpkg dinámico, copiarías las dll de wx aquí, pero vcpkg suele linkear estático por defecto en x64-windows si no se especifica.
-
-          # 3. Copiar DLLs de Visual C++
+          
+          # Copiar redistribuibles de VC++
           $vcRedistDir = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC\v143\x64\Microsoft.VC143.CRT"
           if (Test-Path $vcRedistDir) {
               copy "$vcRedistDir\msvcp140.dll" .
@@ -77,7 +76,7 @@ jobs:
       - name: Subir Artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: detector-wx-${{ steps.times.outputs.timestamp }}
+          name: detector-choco-${{ steps.times.outputs.timestamp }}
           path: |
             *.exe
             *.dll
