@@ -15,7 +15,7 @@ jobs:
           path: |
             C:\tools\opencv
             C:\tools\wxwidgets
-          key: ${{ runner.os }}-deps-v5
+          key: ${{ runner.os }}-deps-v6
 
       - name: Instalar OpenCV
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -25,18 +25,19 @@ jobs:
         if: steps.cache-deps.outputs.cache-hit != 'true'
         shell: powershell
         run: |
-          # Descargamos Headers y Binarios para MSVC 14x (VS 2022) x64
           $url_headers = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxWidgets-3.2.4-headers.7z"
           $url_libs = "https://github.com/wxWidgets/wxWidgets/releases/download/v3.2.4/wxMSW-3.2.4_vc14x_x64_Dev.7z"
-          
           New-Item -ItemType Directory -Force -Path C:\tools\wxwidgets
-          
           Invoke-WebRequest -Uri $url_headers -OutFile wx_headers.7z
           Invoke-WebRequest -Uri $url_libs -OutFile wx_libs.7z
-          
-          # Extraer usando 7zip (preinstalado en el runner)
           7z x wx_headers.7z -oC:\tools\wxwidgets
           7z x wx_libs.7z -oC:\tools\wxwidgets
+
+      - name: Depurar Rutas (Verificar setup.h)
+        shell: powershell
+        run: |
+          echo "Buscando wx/setup.h en C:\tools\wxwidgets..."
+          Get-ChildItem -Path C:\tools\wxwidgets -Filter "setup.h" -Recurse
 
       - name: Generar Timestamp
         id: times
@@ -50,39 +51,33 @@ jobs:
         env:
           TS: ${{ steps.times.outputs.timestamp }}
         run: |
-          # 1. Definir Rutas de OpenCV
           $cvLib = "C:\tools\opencv\build\x64\vc16\lib"
           $cvInc = "C:\tools\opencv\build\include"
           $cvBin = "C:\tools\opencv\build\x64\vc16\bin"
           
-          # 2. Definir Rutas de wxWidgets
+          # Buscamos dinámicamente la carpeta que contiene mswu/wx/setup.h
           $wxBase = "C:\tools\wxwidgets"
+          $setupPath = (Get-ChildItem -Path $wxBase -Recurse -Filter "setup.h" | Where-Object { $_.FullName -like "*mswu*" }).Directory.Parent.FullName
+          
+          echo "Carpeta de configuracion detectada: $setupPath"
+          
           $wxInc = "$wxBase\include"
-          # RUTA CRÍTICA para evitar el error de wx/setup.h
-          $wxSetupInc = "$wxBase\lib\vc_x64_lib\mswu" 
-          $wxLibPath = "$wxBase\lib\vc_x64_lib"
+          $wxSetupInc = $setupPath  # Esta carpeta contiene el 'wx/setup.h'
+          $wxLibPath = (Get-ChildItem -Path $wxBase -Recurse -Filter "wxmsw32u_core.lib").Directory.FullName
 
           $exeName = "detector_$env:TS.exe"
 
-          # 3. Listado de Librerías (.lib)
+          # Flags y Librerías
           $wxLibs = "wxmsw32u_core.lib wxbase32u.lib wxtiff.lib wxjpeg.lib wxpng.lib wxzlib.lib comctl32.lib rpcrt4.lib"
           $cvLibs = "opencv_world4130.lib"
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib"
 
-          # 4. Comando de Compilación MSVC
-          # /I añade los directorios de headers
-          # /D define macros necesarias para wxWidgets y compatibilidad
-          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxInc`" /I`"$wxSetupInc`" /D`"__WXMSW__`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
+          # Compilación - IMPORTANTE: Añadimos /I"$wxSetupInc" antes que la de include general
+          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxSetupInc`" /I`"$wxInc`" /D`"__WXMSW__`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:$exeName"
           
-          # Llamamos a vcvars64.bat para cargar el compilador de 64 bits y luego ejecutamos cl.exe
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
 
-          # 5. Organizar archivos para el Artefacto
-          if (Test-Path "$cvBin\opencv_world4130.dll") {
-              copy "$cvBin\opencv_world4130.dll" .
-          }
-          
-          # DLLs de tiempo de ejecución de Visual C++
+          if (Test-Path "$cvBin\opencv_world4130.dll") { copy "$cvBin\opencv_world4130.dll" . }
           $vcRedistDir = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Redist\MSVC\v143\x64\Microsoft.VC143.CRT"
           if (Test-Path $vcRedistDir) {
               copy "$vcRedistDir\msvcp140.dll" .
