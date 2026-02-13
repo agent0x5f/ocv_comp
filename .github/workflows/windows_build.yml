@@ -61,7 +61,7 @@ jobs:
           $wxLibPath = "$wxBase\lib\vc_x64_lib"
           $wxSetupInc = "$wxLibPath\mswu"
 
-          $exeName = "detector_$env:TS.exe"
+          $exeName = "app_$env:TS.exe"
           
           # Estructura de salida
           New-Item -ItemType Directory -Force -Path dist
