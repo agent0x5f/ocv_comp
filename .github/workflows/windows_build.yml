@@ -73,10 +73,10 @@ jobs:
           $sysLibs = "user32.lib gdi32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib winspool.lib"
 
           # --- COMPILACIÓN ---
-          $msvcCmd = "cl.exe main.cpp /I`"$cvInc`" /I`"$wxBase\include`" /I`"$wxSetupInc`" /D`"__WXMSW__`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:dist\$exeName"
+          # EL CAMBIO ESTÁ AQUÍ: cl.exe *.cpp en lugar de cl.exe main.cpp
+          $msvcCmd = "cl.exe *.cpp /I`"$cvInc`" /I`"$wxBase\include`" /I`"$wxSetupInc`" /D`"__WXMSW__`" /D`"UNICODE`" /D`"_UNICODE`" /EHsc /MD /D`"NDEBUG`" /link /LIBPATH:`"$cvLib`" /LIBPATH:`"$wxLibPath`" $cvLibs $wxLibs $sysLibs /OUT:dist\$exeName"
           
           cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`" && $msvcCmd"
-
           # --- COPIAR DEPENDENCIAS ---
           echo "Copiando DLLs..."
           copy "$cvBin\opencv_world4130.dll" dist\
